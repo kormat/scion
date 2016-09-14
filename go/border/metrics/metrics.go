@@ -106,6 +106,14 @@ var (
 		},
 		[]string{"id"},
 	)
+	InputQueueTime = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "border",
+			Name:      "input_queue_seconds",
+			Help:      "Time packets spend waiting to be queued for processing.",
+		},
+		[]string{"id"},
+	)
 )
 
 func init() {
@@ -121,6 +129,7 @@ func init() {
 	prometheus.MustRegister(InputLoops)
 	prometheus.MustRegister(InputProcessTime)
 	prometheus.MustRegister(OutputProcessTime)
+	prometheus.MustRegister(InputQueueTime)
 }
 
 func Export(addresses []string) {

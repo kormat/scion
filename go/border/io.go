@@ -66,7 +66,11 @@ func (r *Router) readPosixInput(in *net.UDPConn, dirFrom packet.Dir, labels prom
 		p.Ingress.Dst = dst
 		metrics.PktsRecv.With(labels).Inc()
 		metrics.BytesRecv.With(labels).Add(float64(length))
-		q <- p
+		qStart := time.Now()
+		//q <- p
+		r.processPacket(p)
+		qt := time.Now().Sub(qStart).Seconds()
+		metrics.InputQueueTime.With(labels).Add(qt)
 	}
 }
 
