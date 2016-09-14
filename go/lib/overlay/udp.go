@@ -52,12 +52,28 @@ func (u *UDP) BindAddr() *net.UDPAddr {
 
 func (u *UDP) Listen() error {
 	var err error
-	u.Conn, err = net.ListenUDP("udp", u.BindAddr())
-	return err
+	if u.Conn, err = net.ListenUDP("udp", u.BindAddr()); err != nil {
+		return err
+	}
+	if err = u.Conn.SetReadBuffer(1 << 20); err != nil {
+        return err
+	}
+	if err = u.Conn.SetWriteBuffer(1 << 20); err != nil {
+        return err
+	}
+	return nil
 }
 
 func (u *UDP) Connect(raddr *net.UDPAddr) error {
 	var err error
-	u.Conn, err = net.DialUDP("udp", u.BindAddr(), raddr)
-	return err
+	if u.Conn, err = net.DialUDP("udp", u.BindAddr(), raddr); err != nil {
+		return err
+	}
+	if err = u.Conn.SetReadBuffer(1 << 20); err != nil {
+        return err
+	}
+	if err = u.Conn.SetWriteBuffer(1 << 20); err != nil {
+        return err
+	}
+	return nil
 }
