@@ -90,7 +90,7 @@ func setupHSRNetFinish(r *Router) (packet.HookResult, *util.Error) {
 	if err != nil {
 		return packet.HookError, err
 	}
-	q := make(chan *packet.Packet)
+	q := make(chan *packet.Packet, hsr.MaxPkts)
 	r.inQs = append(r.inQs, q)
 	go r.readHSRInput(q)
 	return packet.HookContinue, nil
