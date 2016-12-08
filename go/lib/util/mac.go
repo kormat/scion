@@ -17,6 +17,7 @@ package util
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"sync"
 
 	log "github.com/inconshreveable/log15"
 
@@ -29,8 +30,7 @@ const (
 )
 
 var iv []byte
-var bmCleanQ chan cipher.BlockMode
-var bmDirtyQ chan cipher.BlockMode
+var bmPool sync.Pool
 
 func InitAES(key common.RawBytes) (cipher.Block, *common.Error) {
 	block, err := aes.NewCipher(key)
@@ -38,23 +38,13 @@ func InitAES(key common.RawBytes) (cipher.Block, *common.Error) {
 		return nil, common.NewError(ErrorCipherFailure, log.Ctx{"err": err})
 	}
 	iv = make([]byte, block.BlockSize())
-	go bmClean(block)
+	bmPool.New = func() interface{} { return cipher.NewCBCEncrypter(block, iv) }
 	return block, nil
 }
 
-type bmCleanInt interface {
+type bmSetIV interface {
 	cipher.BlockMode
 	SetIV([]byte)
-}
-
-func bmClean(block cipher.Block) {
-	bmCleanQ = make(chan cipher.BlockMode, 1024)
-	bmDirtyQ = make(chan cipher.BlockMode, 1024)
-	for bm := range bmDirtyQ {
-		bm := bm.(bmCleanInt)
-		bm.SetIV(iv)
-		bmCleanQ <- bm
-	}
 }
 
 func CBCMac(block cipher.Block, msg common.RawBytes) (common.RawBytes, *common.Error) {
@@ -62,15 +52,12 @@ func CBCMac(block cipher.Block, msg common.RawBytes) (common.RawBytes, *common.E
 	if len(msg)%blkSize != 0 {
 		return nil, common.NewError(ErrorCiphertextLen, "textLen", len(msg), "blkSize", blkSize)
 	}
-	var mode cipher.BlockMode
-	select {
-	case mode = <-bmCleanQ:
-	default:
-		mode = cipher.NewCBCEncrypter(block, iv)
-	}
+	mode := bmPool.Get().(bmSetIV)
 	// Work in-place
 	mode.CryptBlocks(msg, msg)
-	bmDirtyQ <- mode
+	// Cleanup and return blockmode to pool
+	mode.SetIV(iv)
+	bmPool.Put(mode)
 	// Return last block
 	return msg[len(msg)-blkSize:], nil
 }
