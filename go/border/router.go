@@ -17,6 +17,7 @@
 package main
 
 import (
+	"sync"
 	"time"
 
 	log "github.com/inconshreveable/log15"
@@ -35,7 +36,7 @@ type Router struct {
 	// inQs is a slice of channels that incoming packets are received from.
 	// FIXME(kormat): maybe remove these in favour of just calling
 	// processPacket directly.
-	inQ chan *rpkt.RtrPkt
+	inQs []chan *rpkt.RtrPkt
 	// locOutFs is a slice of functions for sending packets to local
 	// destinations (i.e. within the local ISD-AS), indexed by the local
 	// address id.
@@ -67,8 +68,12 @@ func (r *Router) Run() *common.Error {
 	go r.SyncInterface()
 	go r.IFStateUpdate()
 	go r.RevInfoFwd()
-	go r.handleQueue(r.inQ)
-	r.handleQueue(r.inQ)
+	var wg sync.WaitGroup
+	for i := range r.inQs {
+		wg.Add(1)
+		go r.handleQueue(r.inQs[i])
+	}
+	wg.Wait()
 	return nil
 }
 

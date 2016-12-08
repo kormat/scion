@@ -57,7 +57,6 @@ func (r *Router) setup(confDir string) *common.Error {
 	r.intfOutFs = make(map[spath.IntfID]rpkt.OutputFunc)
 	r.freePkts = make(chan *rpkt.RtrPkt, 1024)
 	r.revInfoQ = make(chan common.RawBytes)
-	r.inQ = make(chan *rpkt.RtrPkt, 32)
 
 	if err := conf.Load(r.Id, confDir); err != nil {
 		return err
@@ -168,8 +167,11 @@ func setupPosixAddLocal(r *Router, idx int, over *overlay.UDP,
 			ifids = append(ifids, intf.Id)
 		}
 	}
+	// Create a channel for this socket.
+	q := make(chan *rpkt.RtrPkt)
+	r.inQs = append(r.inQs, q)
 	// Start an input goroutine for the socket.
-	go r.readPosixInput(over.Conn, rpkt.DirLocal, ifids, labels, r.inQ)
+	go r.readPosixInput(over.Conn, rpkt.DirLocal, ifids, labels, q)
 	// Add an output callback for the socket.
 	r.locOutFs[idx] = r.mkPosixOutput(labels,
 		func(b common.RawBytes, dst *net.UDPAddr) (int, error) {
@@ -185,8 +187,11 @@ func setupPosixAddExt(r *Router, intf *netconf.Interface,
 	if err := intf.IFAddr.Connect(intf.RemoteAddr); err != nil {
 		return rpkt.HookError, common.NewError("Unable to listen on external socket", "err", err)
 	}
+	// Create a channel for this socket.
+	q := make(chan *rpkt.RtrPkt)
+	r.inQs = append(r.inQs, q)
 	// Start an input goroutine for the socket.
-	go r.readPosixInput(intf.IFAddr.Conn, rpkt.DirExternal, []spath.IntfID{intf.Id}, labels, r.inQ)
+	go r.readPosixInput(intf.IFAddr.Conn, rpkt.DirExternal, []spath.IntfID{intf.Id}, labels, q)
 	// Add an output callback for the socket.
 	conn := intf.IFAddr.Conn
 	r.intfOutFs[intf.Id] = r.mkPosixOutput(labels,

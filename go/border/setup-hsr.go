@@ -105,7 +105,9 @@ func setupHSRNetFinish(r *Router) (rpkt.HookResult, *common.Error) {
 	if err != nil {
 		return rpkt.HookError, err
 	}
-	go r.readHSRInput(r.inQ)
+	q := make(chan *rpkt.RtrPkt)
+	r.inQs = append(r.inQs, q)
+	go r.readHSRInput(q)
 	return rpkt.HookContinue, nil
 }
 
