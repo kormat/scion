@@ -36,6 +36,8 @@ import (
 	"github.com/netsec-ethz/scion/go/lib/spath"
 )
 
+const chanBufSize = 32
+
 type setupNetHook func(r *Router) (rpkt.HookResult, *common.Error)
 type setupAddLocalHook func(r *Router, idx int, over *overlay.UDP, labels prometheus.Labels) (
 	rpkt.HookResult, *common.Error)
@@ -168,7 +170,7 @@ func setupPosixAddLocal(r *Router, idx int, over *overlay.UDP,
 		}
 	}
 	// Create a channel for this socket.
-	q := make(chan *rpkt.RtrPkt)
+	q := make(chan *rpkt.RtrPkt, chanBufSize)
 	r.inQs = append(r.inQs, q)
 	// Start an input goroutine for the socket.
 	go r.readPosixInput(over.Conn, rpkt.DirLocal, ifids, labels, q)
@@ -188,7 +190,7 @@ func setupPosixAddExt(r *Router, intf *netconf.Interface,
 		return rpkt.HookError, common.NewError("Unable to listen on external socket", "err", err)
 	}
 	// Create a channel for this socket.
-	q := make(chan *rpkt.RtrPkt)
+	q := make(chan *rpkt.RtrPkt, chanBufSize)
 	r.inQs = append(r.inQs, q)
 	// Start an input goroutine for the socket.
 	go r.readPosixInput(intf.IFAddr.Conn, rpkt.DirExternal, []spath.IntfID{intf.Id}, labels, q)
