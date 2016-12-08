@@ -93,6 +93,7 @@ func (r *Router) readHSRInput(q chan *rpkt.RtrPkt) {
 func (r *Router) writeHSROutput(rp *rpkt.RtrPkt, dst *net.UDPAddr, portID int,
 	labels prometheus.Labels) {
 	start := time.Now()
+	defer r.recyclePkt(rp)
 	hsr.SendPacket(dst, portID, rp.Raw)
 	duration := time.Now().Sub(start).Seconds()
 	metrics.OutputProcessTime.With(labels).Add(duration)

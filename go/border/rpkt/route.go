@@ -55,6 +55,7 @@ func (rp *RtrPkt) Route() *common.Error {
 	}
 	// Call all egress functions.
 	for _, epair := range rp.Egress {
+		rp.RefInc()
 		epair.F(rp, epair.Dst)
 	}
 	return nil

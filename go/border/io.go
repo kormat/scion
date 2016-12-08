@@ -77,6 +77,7 @@ func (r *Router) mkPosixOutput(labels prometheus.Labels, f posixOutputFunc) rpkt
 	bytesSent := metrics.BytesSent.With(labels)
 	pktsSent := metrics.PktsSent.With(labels)
 	return func(rp *rpkt.RtrPkt, dst *net.UDPAddr) {
+		defer r.recyclePkt(rp)
 		start := time.Now()
 		if count, err := f(rp.Raw, dst); err != nil {
 			rp.Error("Error sending packet", "err", err, "dst", dst)

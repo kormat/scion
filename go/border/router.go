@@ -81,7 +81,6 @@ func (r *Router) handleQueue(q chan *rpkt.RtrPkt) {
 	defer liblog.PanicLog()
 	for rp := range q {
 		r.processPacket(rp)
-		metrics.PktProcessTime.Add(time.Now().Sub(rp.TimeIn).Seconds())
 		r.recyclePkt(rp)
 	}
 }
@@ -146,6 +145,7 @@ func (r *Router) getPktBuf() *rpkt.RtrPkt {
 	select {
 	case rp := <-r.freePkts:
 		// Got one
+		rp.RefInc()
 		metrics.PktBufReuse.Inc()
 		return rp
 	default:
@@ -157,6 +157,11 @@ func (r *Router) getPktBuf() *rpkt.RtrPkt {
 
 // recyclePkt readies a packet for the leaky buffer list (see getPktBuf).
 func (r *Router) recyclePkt(rp *rpkt.RtrPkt) {
+	if rp.RefDec() > 0 {
+		// Reference count is still positive, don't recycle yet.
+		return
+	}
+	metrics.PktProcessTime.Add(time.Now().Sub(rp.TimeIn).Seconds())
 	rp.Reset()
 	select {
 	case r.freePkts <- rp:

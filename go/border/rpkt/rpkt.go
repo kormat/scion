@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"math/rand"
 	"net"
+	"sync/atomic"
 	"time"
 
 	log "github.com/inconshreveable/log15"
@@ -123,6 +124,8 @@ type RtrPkt struct {
 	// SCMPError flags if the packet is an SCMP Error packet, in which case it should never trigger
 	// an error response packet. (PARSE, if SCMP extension header is present)
 	SCMPError bool
+	// Ref is a reference counter for this instance.
+	Ref int32
 	// Logger is used to log messages associated with a packet. The Id field is automatically
 	// included in the output.
 	log.Logger
@@ -135,11 +138,24 @@ func NewRtrPkt() *RtrPkt {
 	// +1 to allow for a leading SCMP hop-by-hop extension.
 	rp.idxs.hbhExt = make([]extnIdx, 0, common.ExtnMaxHBH+1)
 	rp.hooks = newHooks()
+	rp.Ref = 1
 	return rp
 }
 
 func (rp *RtrPkt) SetID() {
 	rand.Read(rp.Id)
+}
+
+func (rp *RtrPkt) RefInc() int32 {
+	return atomic.AddInt32(&rp.Ref, 1)
+}
+
+func (rp *RtrPkt) RefDec() int32 {
+	if assert.On {
+		assert.Must(rp.Ref > 0,
+			assert.WrapS(fmt.Sprintf("Reference count (%d) isn't positive", rp.Ref)))
+	}
+	return atomic.AddInt32(&rp.Ref, -1)
 }
 
 // Dir represents a packet direction. It is used to designate where a packet
