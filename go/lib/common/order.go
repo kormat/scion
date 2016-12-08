@@ -12,18 +12,36 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package assert
+package common
 
-type StringF func() string
+import (
+	"encoding/binary"
+	"unsafe"
+)
 
-func Must(condition bool, f StringF) {
-	if !condition {
-		panic(f())
+var Order = binary.BigEndian
+var Htons = byteSwap16Noop
+var Ntohs = byteSwap16Noop
+
+func init() {
+	if isLittleEndian() {
+		Htons = byteSwap16
+		Ntohs = byteSwap16
 	}
 }
 
-func WrapS(s string) StringF {
-	return func() string {
-		return s
-	}
+func isLittleEndian() bool {
+	var i int32 = 0x01020304
+	u := unsafe.Pointer(&i)
+	pb := (*byte)(u)
+	b := *pb
+	return (b == 0x04)
+}
+
+func byteSwap16(v uint16) uint16 {
+	return ((v >> 8) & 0xFF) | ((v & 0xFF) << 8)
+}
+
+func byteSwap16Noop(v uint16) uint16 {
+	return v
 }

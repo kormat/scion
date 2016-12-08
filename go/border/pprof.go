@@ -12,18 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package assert
+// This file enables profiling over http.
 
-type StringF func() string
+// +build pprof
 
-func Must(condition bool, f StringF) {
-	if !condition {
-		panic(f())
-	}
-}
+package main
 
-func WrapS(s string) StringF {
-	return func() string {
-		return s
-	}
-}
+import (
+	_ "net/http/pprof"
+)

@@ -55,7 +55,7 @@ func (r *Router) readHSRInput(_ chan *rpkt.RtrPkt) {
 		count, err := h.GetPackets(rpkts, usedPorts)
 		if err != nil {
 			log.Error("Error getting packets from HSR", "err", err)
-			// Zero the port counters for next loop
+			// Zero the port flags for next loop
 			for i := range usedPorts {
 				usedPorts[i] = false
 			}

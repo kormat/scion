@@ -129,7 +129,7 @@ func (rp *RtrPkt) forward() (HookResult, *common.Error) {
 // neighbouring ISD-AS.
 func (rp *RtrPkt) forwardFromExternal() (HookResult, *common.Error) {
 	if assert.On {
-		assert.Must(rp.hopF != nil, rp.ErrStr("rp.hopF must not be nil"))
+		assert.Must(rp.hopF != nil, rp.AssertStr("rp.hopF must not be nil"))
 	}
 	if rp.hopF.VerifyOnly { // Should have been caught by validatePath
 		return HookError, common.NewError(

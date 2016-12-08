@@ -57,6 +57,42 @@ type hooks struct {
 	Route    []hookRoute
 }
 
+func newHooks() *hooks {
+	h := &hooks{}
+	h.SrcIA = make([]hookIA, 0, 3)
+	h.SrcHost = make([]hookHost, 0, 3)
+	h.DstIA = make([]hookIA, 0, 3)
+	h.DstHost = make([]hookHost, 0, 3)
+	h.Infof = make([]hookInfoF, 0, 3)
+	h.HopF = make([]hookHopF, 0, 3)
+	h.UpFlag = make([]hookBool, 0, 3)
+	h.IFCurr = make([]hookIntf, 0, 3)
+	h.IFNext = make([]hookIntf, 0, 3)
+	h.Validate = make([]hookValidate, 0, 3)
+	h.L4 = make([]hookL4, 0, 3)
+	h.Payload = make([]hookPayload, 0, 3)
+	h.Process = make([]hookProcess, 0, 3)
+	h.Route = make([]hookRoute, 0, 10)
+	return h
+}
+
+func (h *hooks) Reset() {
+	h.SrcIA = h.SrcIA[:0]
+	h.SrcHost = h.SrcHost[:0]
+	h.DstIA = h.DstIA[:0]
+	h.DstHost = h.DstHost[:0]
+	h.Infof = h.Infof[:0]
+	h.HopF = h.HopF[:0]
+	h.UpFlag = h.UpFlag[:0]
+	h.IFCurr = h.IFCurr[:0]
+	h.IFNext = h.IFNext[:0]
+	h.Validate = h.Validate[:0]
+	h.L4 = h.L4[:0]
+	h.Payload = h.Payload[:0]
+	h.Process = h.Process[:0]
+	h.Route = h.Route[:0]
+}
+
 type HookResult int
 
 const (

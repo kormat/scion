@@ -34,6 +34,8 @@ var (
 	id       = flag.String("id", "", "Element ID (Required. E.g. 'br4-21-9')")
 	confDir  = flag.String("confd", ".", "Configuration directory")
 	profFlag = flag.Bool("profile", false, "Enable cpu and memory profiling")
+	httpAddr = flag.String("http", "", "address:port to run the http server on. "+
+		"This is used to export metrics, and allow remote profiling.")
 )
 
 func main() {

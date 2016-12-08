@@ -20,7 +20,6 @@ import (
 	"time"
 
 	log "github.com/inconshreveable/log15"
-	logext "github.com/inconshreveable/log15/ext"
 
 	"github.com/netsec-ethz/scion/go/lib/addr"
 	"github.com/netsec-ethz/scion/go/lib/common"
@@ -34,7 +33,7 @@ func RtrPktFromScnPkt(sp *spkt.ScnPkt, dirTo Dir) (*RtrPkt, *common.Error) {
 	hdrLen := sp.HdrLen()
 	totalLen := sp.TotalLen()
 	rp.TimeIn = time.Now()
-	rp.Id = logext.RandId(4)
+	rp.SetID()
 	rp.Logger = log.New("rpkt", rp.Id)
 	rp.DirFrom = DirSelf
 	rp.DirTo = dirTo

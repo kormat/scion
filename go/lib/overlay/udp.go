@@ -22,6 +22,7 @@ const (
 	// EndhostPort is the overlay port that the dispatcher binds to on non-routers. Subject to
 	// change during standardisation.
 	EndhostPort = 30041
+	bufferSize  = 5 * (1 << 20) // 5 MiB
 )
 
 type UDP struct {
@@ -54,12 +55,26 @@ func (u *UDP) BindAddr() *net.UDPAddr {
 
 func (u *UDP) Listen() error {
 	var err error
-	u.Conn, err = net.ListenUDP("udp", u.BindAddr())
-	return err
+	if u.Conn, err = net.ListenUDP("udp", u.BindAddr()); err != nil {
+		return err
+	}
+	return u.setBufSize()
 }
 
 func (u *UDP) Connect(raddr *net.UDPAddr) error {
 	var err error
-	u.Conn, err = net.DialUDP("udp", u.BindAddr(), raddr)
-	return err
+	if u.Conn, err = net.DialUDP("udp", u.BindAddr(), raddr); err != nil {
+		return err
+	}
+	return u.setBufSize()
+}
+
+func (u *UDP) setBufSize() error {
+	if err := u.Conn.SetReadBuffer(bufferSize); err != nil {
+		return err
+	}
+	if err := u.Conn.SetWriteBuffer(bufferSize); err != nil {
+		return err
+	}
+	return nil
 }

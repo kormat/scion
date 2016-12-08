@@ -57,6 +57,7 @@ func (r *Router) setup(confDir string) *common.Error {
 	r.intfOutFs = make(map[spath.IntfID]rpkt.OutputFunc)
 	r.freePkts = make(chan *rpkt.RtrPkt, 1024)
 	r.revInfoQ = make(chan common.RawBytes)
+	r.inQ = make(chan *rpkt.RtrPkt, 32)
 
 	if err := conf.Load(r.Id, confDir); err != nil {
 		return err
@@ -78,6 +79,7 @@ func (r *Router) setupNet() *common.Error {
 	setupAddLocalHooks = append(setupAddLocalHooks, setupPosixAddLocal)
 	setupAddExtHooks = append(setupAddExtHooks, setupPosixAddExt)
 	// Run startup hooks, if any.
+Lstart:
 	for _, f := range setupNetStartHooks {
 		ret, err := f(r)
 		switch {
@@ -86,14 +88,13 @@ func (r *Router) setupNet() *common.Error {
 		case ret == rpkt.HookContinue:
 			continue
 		case ret == rpkt.HookFinish:
-			break
+			break Lstart
 		}
 	}
 	// Iterate over local addresses, configuring them via provided hooks.
-	var addrs []string
 	for i, a := range conf.C.Net.LocAddr {
-		addrs = append(addrs, a.BindAddr().String())
 		labels := prometheus.Labels{"id": fmt.Sprintf("loc:%d", i)}
+	Llocal:
 		for _, f := range setupAddLocalHooks {
 			ret, err := f(r, i, a, labels)
 			switch {
@@ -102,16 +103,18 @@ func (r *Router) setupNet() *common.Error {
 			case ret == rpkt.HookContinue:
 				continue
 			case ret == rpkt.HookFinish:
-				break
+				break Llocal
 			}
 		}
 	}
-	// Export prometheus metrics on all local addresses
-	metrics.Export(addrs)
+	// Export prometheus metrics over http interface, if specified.
+	if len(*httpAddr) != 0 {
+		metrics.Export([]string{*httpAddr})
+	}
 	// Iterate over interfaces, configuring them via provided hooks.
 	for _, intf := range conf.C.Net.IFs {
 		labels := prometheus.Labels{"id": fmt.Sprintf("intf:%d", intf.Id)}
-	InnerLoop:
+	Lintf:
 		for _, f := range setupAddExtHooks {
 			ret, err := f(r, intf, labels)
 			switch {
@@ -121,11 +124,12 @@ func (r *Router) setupNet() *common.Error {
 				continue
 			case ret == rpkt.HookFinish:
 				// Break out of switch statement and inner loop.
-				break InnerLoop
+				break Lintf
 			}
 		}
 	}
 	// Run finish hooks, if any.
+Lfinish:
 	for _, f := range setupNetFinishHooks {
 		ret, err := f(r)
 		switch {
@@ -134,7 +138,7 @@ func (r *Router) setupNet() *common.Error {
 		case ret == rpkt.HookContinue:
 			continue
 		case ret == rpkt.HookFinish:
-			break
+			break Lfinish
 		}
 	}
 	// Drop capability privileges, if any.
@@ -164,18 +168,13 @@ func setupPosixAddLocal(r *Router, idx int, over *overlay.UDP,
 			ifids = append(ifids, intf.Id)
 		}
 	}
-	// Create a channel for this socket.
-	q := make(chan *rpkt.RtrPkt)
-	r.inQs = append(r.inQs, q)
 	// Start an input goroutine for the socket.
-	go r.readPosixInput(over.Conn, rpkt.DirLocal, ifids, labels, q)
+	go r.readPosixInput(over.Conn, rpkt.DirLocal, ifids, labels, r.inQ)
 	// Add an output callback for the socket.
-	f := func(b common.RawBytes, dst *net.UDPAddr) (int, error) {
-		return over.Conn.WriteToUDP(b, dst)
-	}
-	r.locOutFs[idx] = func(rp *rpkt.RtrPkt, dst *net.UDPAddr) {
-		r.writePosixOutput(labels, rp, dst, f)
-	}
+	r.locOutFs[idx] = r.mkPosixOutput(labels,
+		func(b common.RawBytes, dst *net.UDPAddr) (int, error) {
+			return over.Conn.WriteToUDP(b, dst)
+		})
 	return rpkt.HookFinish, nil
 }
 
@@ -186,20 +185,15 @@ func setupPosixAddExt(r *Router, intf *netconf.Interface,
 	if err := intf.IFAddr.Connect(intf.RemoteAddr); err != nil {
 		return rpkt.HookError, common.NewError("Unable to listen on external socket", "err", err)
 	}
-	// Create a channel for this socket.
-	q := make(chan *rpkt.RtrPkt)
-	r.inQs = append(r.inQs, q)
 	// Start an input goroutine for the socket.
-	go r.readPosixInput(intf.IFAddr.Conn, rpkt.DirExternal, []spath.IntfID{intf.Id}, labels, q)
+	go r.readPosixInput(intf.IFAddr.Conn, rpkt.DirExternal, []spath.IntfID{intf.Id}, labels, r.inQ)
 	// Add an output callback for the socket.
 	conn := intf.IFAddr.Conn
-	dst := conn.RemoteAddr().(*net.UDPAddr)
-	f := func(b common.RawBytes, _ *net.UDPAddr) (int, error) {
-		return conn.Write(b)
-	}
-	r.intfOutFs[intf.Id] = func(rp *rpkt.RtrPkt, _ *net.UDPAddr) {
-		// An interface can only send packets to a fixed remote address, so ignore the UDPAddr arg.
-		r.writePosixOutput(labels, rp, dst, f)
-	}
+	r.intfOutFs[intf.Id] = r.mkPosixOutput(labels,
+		func(b common.RawBytes, _ *net.UDPAddr) (int, error) {
+			// An interface can only send packets to a fixed remote address, so
+			// ignore the UDPAddr arg.
+			return conn.Write(b)
+		})
 	return rpkt.HookFinish, nil
 }

@@ -17,11 +17,9 @@
 package main
 
 import (
-	"sync"
 	"time"
 
 	log "github.com/inconshreveable/log15"
-	logext "github.com/inconshreveable/log15/ext"
 
 	"github.com/netsec-ethz/scion/go/border/metrics"
 	"github.com/netsec-ethz/scion/go/border/rpkt"
@@ -37,7 +35,7 @@ type Router struct {
 	// inQs is a slice of channels that incoming packets are received from.
 	// FIXME(kormat): maybe remove these in favour of just calling
 	// processPacket directly.
-	inQs []chan *rpkt.RtrPkt
+	inQ chan *rpkt.RtrPkt
 	// locOutFs is a slice of functions for sending packets to local
 	// destinations (i.e. within the local ISD-AS), indexed by the local
 	// address id.
@@ -69,12 +67,7 @@ func (r *Router) Run() *common.Error {
 	go r.SyncInterface()
 	go r.IFStateUpdate()
 	go r.RevInfoFwd()
-	var wg sync.WaitGroup
-	for _, q := range r.inQs {
-		wg.Add(1)
-		go r.handleQueue(q)
-	}
-	wg.Wait()
+	r.handleQueue(r.inQ)
 	return nil
 }
 
@@ -92,15 +85,15 @@ func (r *Router) handleQueue(q chan *rpkt.RtrPkt) {
 func (r *Router) processPacket(rp *rpkt.RtrPkt) {
 	defer liblog.PanicLog()
 	if assert.On {
-		assert.Must(len(rp.Raw) > 0, "Raw must not be empty")
-		assert.Must(rp.DirFrom != rpkt.DirUnset, "DirFrom must be set")
-		assert.Must(rp.TimeIn != time.Time{}, "TimeIn must be set")
-		assert.Must(rp.Ingress.Src != nil, "Ingress.Src must be set")
-		assert.Must(rp.Ingress.Dst != nil, "Ingress.Dst must be set")
-		assert.Must(len(rp.Ingress.IfIDs) > 0, "Ingress.IfIDs must not be empty")
+		assert.Must(len(rp.Raw) > 0, assert.WrapS("Raw must not be empty"))
+		assert.Must(rp.DirFrom != rpkt.DirUnset, assert.WrapS("DirFrom must be set"))
+		assert.Must(rp.TimeIn != time.Time{}, assert.WrapS("TimeIn must be set"))
+		assert.Must(rp.Ingress.Src != nil, assert.WrapS("Ingress.Src must be set"))
+		assert.Must(rp.Ingress.Dst != nil, assert.WrapS("Ingress.Dst must be set"))
+		assert.Must(len(rp.Ingress.IfIDs) > 0, assert.WrapS("Ingress.IfIDs must not be empty"))
 	}
 	// Assign a pseudorandom ID to the packet, for correlating log entries.
-	rp.Id = logext.RandId(4)
+	rp.SetID()
 	rp.Logger = log.New("rpkt", rp.Id)
 	if err := rp.Parse(); err != nil {
 		r.handlePktError(rp, err, "Error parsing packet")

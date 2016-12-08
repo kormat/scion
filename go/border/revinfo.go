@@ -81,13 +81,13 @@ func (r *Router) decodeRevToken(b common.RawBytes) *proto.RevInfo {
 }
 
 // fwdRevInfo forwards RevInfo payloads to a designated local host.
-func (r *Router) fwdRevInfo(revInfo *proto.RevInfo, dstHost addr.HostAddr) {
+func (r *Router) fwdRevInfo(revInfo *proto.RevInfo, dst addr.HostSVC) {
 	// Pick first local address from topology as source.
 	srcAddr := conf.C.Net.LocAddr[0].PublicAddr()
 	// Create base packet
 	rp, err := rpkt.RtrPktFromScnPkt(&spkt.ScnPkt{
 		SrcIA: conf.C.IA, SrcHost: addr.HostFromIP(srcAddr.IP),
-		DstIA: conf.C.IA, DstHost: dstHost,
+		DstIA: conf.C.IA, DstHost: &dst,
 		L4: &l4.UDP{SrcPort: uint16(srcAddr.Port), DstPort: 0},
 	}, rpkt.DirLocal)
 	if err != nil {
@@ -101,7 +101,7 @@ func (r *Router) fwdRevInfo(revInfo *proto.RevInfo, dstHost addr.HostAddr) {
 	}
 	pathMgmt.SetRevInfo(*revInfo)
 	rp.SetPld(&spkt.CtrlPld{SCION: scion})
-	_, err = rp.RouteResolveSVCMulti(*dstHost.(*addr.HostSVC), r.locOutFs[0])
+	_, err = rp.RouteResolveSVCMulti(dst, r.locOutFs[0])
 	if err != nil {
 		log.Error("Unable to route RevInfo packet", err.Ctx...)
 		return

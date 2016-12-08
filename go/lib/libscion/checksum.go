@@ -41,7 +41,7 @@ func Checksum(srcs ...common.RawBytes) uint16 {
 		}
 		C.chk_add_chunk(chkin, sptr, C.int(slen))
 	}
-	val := uint16(C.ntohs(C.checksum(chkin)))
+	val := common.Ntohs(uint16(C.checksum(chkin)))
 	C.rm_chk_input(chkin)
 	return val
 }

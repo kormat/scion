@@ -39,9 +39,10 @@ import (
 )
 
 var (
-	hsrIPs = flag.String("hsr.ips", "", "Comma-separated list of IPs for HSR")
-	// hsrIPMap is used at startup to check if a given IP is managed by libhsr.
-	hsrIPMap = make(map[string]bool)
+	hsrIPsArg = flag.String("hsr.ips", "",
+		"Comma-separated list of IPs for HSR (must be ordered by PCI address)")
+	// hsrIPs is used at startup to check if a given IP is managed by libhsr.
+	hsrIPs []string
 	// See hsr.AddrMs
 	hsrAddrMs []hsr.AddrMeta
 )
@@ -54,16 +55,16 @@ func init() {
 }
 
 func setupHSRNetStart(r *Router) (rpkt.HookResult, *common.Error) {
-	for _, ip := range strings.Split(*hsrIPs, ",") {
-		hsrIPMap[ip] = true
-	}
+	hsrIPs = strings.Split(*hsrIPsArg, ",")
+	hsrAddrMs = make([]hsr.AddrMeta, len(hsrIPs))
 	return rpkt.HookContinue, nil
 }
 
 func setupHSRAddLocal(r *Router, idx int, over *overlay.UDP,
 	labels prometheus.Labels) (rpkt.HookResult, *common.Error) {
 	bind := over.BindAddr()
-	if _, hsr := hsrIPMap[bind.IP.String()]; !hsr {
+	hPort := findHSRIP(bind.IP.String())
+	if hPort < 0 {
 		return rpkt.HookContinue, nil
 	}
 	var ifids []spath.IntfID
@@ -72,10 +73,10 @@ func setupHSRAddLocal(r *Router, idx int, over *overlay.UDP,
 			ifids = append(ifids, intf.Id)
 		}
 	}
-	hsrAddrMs = append(hsrAddrMs, hsr.AddrMeta{GoAddr: bind,
-		DirFrom: rpkt.DirLocal, IfIDs: ifids, Labels: labels})
+	hsrAddrMs[hPort] = hsr.AddrMeta{GoAddr: bind,
+		DirFrom: rpkt.DirLocal, IfIDs: ifids, Labels: labels}
 	r.locOutFs[idx] = func(rp *rpkt.RtrPkt, dst *net.UDPAddr) {
-		r.writeHSROutput(rp, dst, len(hsrAddrMs)-1, labels)
+		r.writeHSROutput(rp, dst, hPort, labels)
 	}
 	return rpkt.HookFinish, nil
 }
@@ -83,13 +84,14 @@ func setupHSRAddLocal(r *Router, idx int, over *overlay.UDP,
 func setupHSRAddExt(r *Router, intf *netconf.Interface,
 	labels prometheus.Labels) (rpkt.HookResult, *common.Error) {
 	bind := intf.IFAddr.BindAddr()
-	if _, hsr := hsrIPMap[bind.IP.String()]; !hsr {
+	hPort := findHSRIP(bind.IP.String())
+	if hPort < 0 {
 		return rpkt.HookContinue, nil
 	}
-	hsrAddrMs = append(hsrAddrMs, hsr.AddrMeta{
-		GoAddr: bind, DirFrom: rpkt.DirExternal, IfIDs: []spath.IntfID{intf.Id}, Labels: labels})
+	hsrAddrMs[hPort] = hsr.AddrMeta{
+		GoAddr: bind, DirFrom: rpkt.DirExternal, IfIDs: []spath.IntfID{intf.Id}, Labels: labels}
 	r.intfOutFs[intf.Id] = func(rp *rpkt.RtrPkt, dst *net.UDPAddr) {
-		r.writeHSROutput(rp, dst, len(hsrAddrMs)-1, labels)
+		r.writeHSROutput(rp, dst, hPort, labels)
 	}
 	return rpkt.HookFinish, nil
 }
@@ -103,8 +105,15 @@ func setupHSRNetFinish(r *Router) (rpkt.HookResult, *common.Error) {
 	if err != nil {
 		return rpkt.HookError, err
 	}
-	q := make(chan *rpkt.RtrPkt)
-	r.inQs = append(r.inQs, q)
-	go r.readHSRInput(q)
+	go r.readHSRInput(r.inQ)
 	return rpkt.HookContinue, nil
+}
+
+func findHSRIP(addr string) int {
+	for i, hsrA := range hsrIPs {
+		if strings.Compare(hsrA, addr) == 0 {
+			return i
+		}
+	}
+	return -1
 }

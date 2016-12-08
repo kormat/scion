@@ -14,13 +14,7 @@
 
 package common
 
-import (
-	"encoding/binary"
-)
-
 const (
 	// LineLen is the number of bytes that all SCION headers are padded to a multiple of.
 	LineLen = 8
 )
-
-var Order = binary.BigEndian

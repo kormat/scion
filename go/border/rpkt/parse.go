@@ -18,6 +18,8 @@
 package rpkt
 
 import (
+	"net"
+
 	"github.com/netsec-ethz/scion/go/border/conf"
 	"github.com/netsec-ethz/scion/go/lib/addr"
 	"github.com/netsec-ethz/scion/go/lib/assert"
@@ -114,8 +116,6 @@ func (rp *RtrPkt) parseBasic() *common.Error {
 // parseHopExtns walks the header chain, parsing hop-by-hop extensions,
 // stopping at the first non-HBH extension/L4 protocol header.
 func (rp *RtrPkt) parseHopExtns() *common.Error {
-	// +1 to allow for a leading SCMP hop-by-hop extension.
-	rp.idxs.hbhExt = make([]extnIdx, 0, common.ExtnMaxHBH+1)
 	rp.idxs.nextHdrIdx.Type = rp.CmnHdr.NextHdr
 	rp.idxs.nextHdrIdx.Index = int(rp.CmnHdr.HdrLen)
 	nextHdr := &rp.idxs.nextHdrIdx.Type
@@ -132,7 +132,7 @@ func (rp *RtrPkt) parseHopExtns() *common.Error {
 		if err != nil {
 			return err
 		}
-		e.RegisterHooks(&rp.hooks)
+		e.RegisterHooks(rp.hooks)
 		rp.HBHExt = append(rp.HBHExt, e)
 		rp.idxs.hbhExt = append(rp.idxs.hbhExt, extnIdx{currExtn, *offset})
 		*nextHdr = common.L4ProtocolType(rp.Raw[*offset])
@@ -150,9 +150,9 @@ func (rp *RtrPkt) parseHopExtns() *common.Error {
 // field accordingly.
 func (rp *RtrPkt) setDirTo() {
 	if assert.On {
-		assert.Must(rp.DirFrom != DirSelf, rp.ErrStr("DirFrom must not be DirSelf."))
-		assert.Must(rp.DirFrom != DirUnset, rp.ErrStr("DirFrom must not be DirUnset."))
-		assert.Must(rp.ifCurr != nil, rp.ErrStr("rp.ifCurr must not be nil."))
+		assert.Must(rp.DirFrom != DirSelf, rp.AssertStr("DirFrom must not be DirSelf."))
+		assert.Must(rp.DirFrom != DirUnset, rp.AssertStr("DirFrom must not be DirUnset."))
+		assert.Must(rp.ifCurr != nil, rp.AssertStr("rp.ifCurr must not be nil."))
 	}
 	if *rp.dstIA != *conf.C.IA {
 		// Packet is not destined to the local AS, so it can't be DirSelf.
@@ -167,13 +167,13 @@ func (rp *RtrPkt) setDirTo() {
 	}
 	// Local AS is the destination, so figure out if it's DirLocal or DirSelf.
 	intf := conf.C.Net.IFs[*rp.ifCurr]
-	var intfHost addr.HostAddr
+	var intfIP net.IP
 	if rp.DirFrom == DirExternal {
-		intfHost = addr.HostFromIP(intf.IFAddr.PublicAddr().IP)
+		intfIP = intf.IFAddr.PublicAddr().IP
 	} else {
-		intfHost = addr.HostFromIP(conf.C.Net.LocAddr[intf.LocAddrIdx].PublicAddr().IP)
+		intfIP = conf.C.Net.LocAddr[intf.LocAddrIdx].PublicAddr().IP
 	}
-	if addr.HostEq(rp.dstHost, intfHost) {
+	if intfIP.Equal(rp.dstHost.IP()) {
 		rp.DirTo = DirSelf
 	} else {
 		rp.DirTo = DirLocal

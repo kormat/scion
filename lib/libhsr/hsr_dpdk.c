@@ -55,7 +55,7 @@
 
 // change value to control amount of logging (heavily affects performance)
 // can result in compile warnings for unused variables
-#define LOGLEVEL 1
+#define LOGLEVEL 3
 #if LOGLEVEL > 1
 #undef zlog_debug
 #define zlog_debug(...)
@@ -1186,7 +1186,9 @@ static inline int open_sockets()
             memcpy(&sin6.sin6_addr, get_ss_addr(&local_addrs[i]), sizeof(sin6.sin6_addr));
         }
         if (bind(sockets[i], (struct sockaddr *)&sin6, sizeof(sin6)) < 0) {
-            zlog_fatal(zc, "error binding socket to addr %s", strerror(errno));
+            zlog_fatal(zc, "error binding socket to addr (portid %d, addr [%s]:%d): %s",
+                    i, addr_to_str((uint8_t *)&sin6.sin6_addr, ADDR_IPV6_TYPE, NULL),
+                    ntohs(sin6.sin6_port), strerror(errno));
             return 1;
         }
     }

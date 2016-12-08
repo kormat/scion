@@ -29,7 +29,7 @@ import (
 // validatePath validates the path header.
 func (rp *RtrPkt) validatePath(dirFrom Dir) *common.Error {
 	if assert.On {
-		assert.Must(rp.ifCurr != nil, rp.ErrStr("rp.ifCurr must not be nil"))
+		assert.Must(rp.ifCurr != nil, rp.AssertStr("rp.ifCurr must not be nil"))
 	}
 	// First check to make sure the current interface is known and not revoked.
 	if err := rp.validateLocalIF(*rp.ifCurr); err != nil {

@@ -101,7 +101,7 @@ func (rp *RtrPkt) extnAddHBH(e common.Extension) *common.Error {
 	if err != nil {
 		return err
 	}
-	re.RegisterHooks(&rp.hooks)
+	re.RegisterHooks(rp.hooks)
 	rp.HBHExt = append(rp.HBHExt, re)
 	// Update metadata indexes
 	rp.idxs.hbhExt = append(rp.idxs.hbhExt, extnIdx{e.Type(), offset})

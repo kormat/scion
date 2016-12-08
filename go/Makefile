@@ -5,7 +5,7 @@ LOCAL_DIRS = $(shell find * -maxdepth 0 -type d | grep -v '^vendor$$')
 LOCAL_PKGS = $(patsubst %, ./%/..., $(LOCAL_DIRS))
 LOCAL_GOBIN = $(shell realpath -s $$PWD/../bin)
 LOCAL_NONGEN = $(shell find ${LOCAL_DIRS} -type f -iname '*.go' -a '!' -iname '*.capnp.go')
-GOTAGS = assert
+GOTAGS = pprof
 
 all: deps_proto bin
 
@@ -60,5 +60,5 @@ libs: deps_proto
 	govendor install -v +local,^program
 
 hsr: libs
-	GOBIN=${LOCAL_GOBIN} go install -v -tags hsr ./border/...
+	GOBIN=${LOCAL_GOBIN} go install -v -tags "hsr $(GOTAGS)" ./border/...
 	sudo setcap cap_dac_read_search,cap_dac_override,cap_sys_admin,cap_net_raw+ep ../bin/border

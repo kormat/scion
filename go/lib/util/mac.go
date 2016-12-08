@@ -28,11 +28,14 @@ const (
 	ErrorCiphertextLen = "Ciphertext isn't a multiple of the block size"
 )
 
+var iv []byte
+
 func InitAES(key common.RawBytes) (cipher.Block, *common.Error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, common.NewError(ErrorCipherFailure, log.Ctx{"err": err})
 	}
+	iv = make([]byte, block.BlockSize())
 	return block, nil
 }
 
@@ -41,11 +44,9 @@ func CBCMac(block cipher.Block, msg common.RawBytes) (common.RawBytes, *common.E
 	if len(msg)%blkSize != 0 {
 		return nil, common.NewError(ErrorCiphertextLen, "textLen", len(msg), "blkSize", blkSize)
 	}
-	iv := make([]byte, blkSize, blkSize)
 	mode := cipher.NewCBCEncrypter(block, iv)
 	// Work in-place
 	mode.CryptBlocks(msg, msg)
-	// Trim to last block
-	msg = msg[len(msg)-blkSize:]
-	return msg, nil
+	// Return last block
+	return msg[len(msg)-blkSize:], nil
 }

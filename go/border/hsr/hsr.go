@@ -87,7 +87,8 @@ func Init(zlog_cfg string, args []string, addrMs []AddrMeta) *common.Error {
 	}
 	// Initialise libhsr. Its logging is controlled by the zlog config and
 	// category, and DPDK's general options are configured by the argv.
-	if C.router_init(C.CString(zlog_cfg), C.CString("border"), C.int(len(argv)), &argv[0]) != 0 {
+	if C.router_init(C.CString(zlog_cfg), C.CString("libhsr"), C.int(len(argv)), &argv[0]) != 0 {
+		Finish()
 		return common.NewError("Failure initialising libhsr (router_init)")
 	}
 	AddrMs = addrMs
@@ -99,10 +100,12 @@ func Init(zlog_cfg string, args []string, addrMs []AddrMeta) *common.Error {
 	}
 	// Configure network ports
 	if C.setup_network(&cAddrs[0], C.int(len(cAddrs))) != 0 {
+		Finish()
 		return common.NewError("Failure initialising libhsr (setup_network)")
 	}
 	// Create the libhsr worker threads.
 	if C.create_lib_threads() != 0 {
+		Finish()
 		return common.NewError("Failure initialising libhsr (create_lib_threads)")
 	}
 	return nil
@@ -147,8 +150,8 @@ func (h *HSR) GetPackets(rps []*rpkt.RtrPkt, usedPorts []bool) (int, *common.Err
 	// case libhsr does not keep any pointers by design, so it is safe, but it
 	// does require setting the GODEBUG environment variable to "cgocheck=0" to
 	// stop Go's checks from terminating the program.
-	for i, rp := range rps {
-		h.InPkts[i].buf = (*C.uint8_t)(unsafe.Pointer(&rp.Raw[0]))
+	for i := range rps {
+		h.InPkts[i].buf = (*C.uint8_t)(unsafe.Pointer(&rps[i].Raw[0]))
 	}
 	count := int(C.get_packets(unsafe.Pointer(&h.InPkts), C.int(*hsrInMin),
 		C.int(len(rps)), C.int(*hsrInTout)))
@@ -212,7 +215,7 @@ func saddrToUDPAddr(addr *net.UDPAddr, saddr *C.saddr_storage) *common.Error {
 // udpAddrToSaddr converts Go's net.UDPAddr type to C's sockaddr_storage type.
 func udpAddrToSaddr(addr *net.UDPAddr, saddr *C.saddr_storage) {
 	// Convert Go int to network-byte-order C int
-	cport := C.in_port_t(C.htons(C.uint16_t(addr.Port)))
+	cport := C.in_port_t(common.Htons(uint16(addr.Port)))
 	if addr.IP.To4() != nil {
 		s4 := (*C.saddr_in)(unsafe.Pointer(saddr))
 		s4.sin_family = C.AF_INET

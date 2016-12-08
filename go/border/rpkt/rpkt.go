@@ -21,12 +21,14 @@ package rpkt
 
 import (
 	"fmt"
+	"math/rand"
 	"net"
 	"time"
 
 	log "github.com/inconshreveable/log15"
 
 	"github.com/netsec-ethz/scion/go/lib/addr"
+	"github.com/netsec-ethz/scion/go/lib/assert"
 	"github.com/netsec-ethz/scion/go/lib/common"
 	"github.com/netsec-ethz/scion/go/lib/l4"
 	"github.com/netsec-ethz/scion/go/lib/scmp"
@@ -65,7 +67,7 @@ func Init(locOut map[int]OutputFunc, intfOut map[spath.IntfID]OutputFunc,
 type RtrPkt struct {
 	// Id is a pseudo-random identifier for a packet, to allow correlation of logging statements.
 	// (RECV)
-	Id string
+	Id common.RawBytes
 	// Raw is the underlying buffer that represents the raw packet bytes. (RECV)
 	Raw common.RawBytes
 	// TimeIn is the time the packet was received. This is used for metrics calculations. (RECV)
@@ -117,7 +119,7 @@ type RtrPkt struct {
 	pld common.Payload
 	// hooks are registered callbacks to override/supplement normal processing. Their main use is
 	// for extensions to modify packet handling.  (PARSE/PROCESS, only if needed)
-	hooks hooks
+	hooks *hooks
 	// SCMPError flags if the packet is an SCMP Error packet, in which case it should never trigger
 	// an error response packet. (PARSE, if SCMP extension header is present)
 	SCMPError bool
@@ -127,9 +129,17 @@ type RtrPkt struct {
 }
 
 func NewRtrPkt() *RtrPkt {
-	r := &RtrPkt{}
-	r.Raw = make(common.RawBytes, pktBufSize)
-	return r
+	rp := &RtrPkt{}
+	rp.Id = make(common.RawBytes, 4)
+	rp.Raw = make(common.RawBytes, pktBufSize)
+	// +1 to allow for a leading SCMP hop-by-hop extension.
+	rp.idxs.hbhExt = make([]extnIdx, 0, common.ExtnMaxHBH+1)
+	rp.hooks = newHooks()
+	return rp
+}
+
+func (rp *RtrPkt) SetID() {
+	rand.Read(rp.Id)
 }
 
 // Dir represents a packet direction. It is used to designate where a packet
@@ -195,6 +205,19 @@ type packetIdxs struct {
 	pld        int
 }
 
+func (p *packetIdxs) Reset() {
+	p.srcIA = 0
+	p.srcHost = 0
+	p.dstIA = 0
+	p.dstHost = 0
+	p.path = 0
+	p.nextHdrIdx = hdrIdx{}
+	p.hbhExt = p.hbhExt[:0]
+	p.e2eExt = p.e2eExt[:0]
+	p.l4 = 0
+	p.pld = 0
+}
+
 // hdrIdx provides the protocol type and index of a given L4/extension header.
 type hdrIdx struct {
 	Type  common.L4ProtocolType
@@ -224,7 +247,7 @@ func (rp *RtrPkt) Reset() {
 	rp.Ingress.Dst = nil
 	rp.Ingress.IfIDs = nil
 	rp.Egress = rp.Egress[:0]
-	rp.idxs = packetIdxs{}
+	rp.idxs.Reset()
 	rp.srcIA = nil
 	rp.srcHost = nil
 	rp.dstIA = nil
@@ -239,7 +262,7 @@ func (rp *RtrPkt) Reset() {
 	rp.L4Type = common.L4None
 	rp.l4 = nil
 	rp.pld = nil
-	rp.hooks = hooks{}
+	rp.hooks.Reset()
 	rp.SCMPError = false
 }
 
@@ -335,4 +358,10 @@ func (rp *RtrPkt) String() string {
 // packet buffer.
 func (rp *RtrPkt) ErrStr(desc string) string {
 	return fmt.Sprintf("Error: %v\n  RtrPkt: %v\n  Raw: %v", desc, rp, rp.Raw)
+}
+
+func (rp *RtrPkt) AssertStr(desc string) assert.StringF {
+	return func() string {
+		return rp.ErrStr(desc)
+	}
 }
