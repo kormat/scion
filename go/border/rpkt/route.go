@@ -54,9 +54,9 @@ func (rp *RtrPkt) Route() *common.Error {
 			"dirFrom", rp.DirFrom, "dirTo", rp.DirTo, "raw", rp.Raw)
 	}
 	// Call all egress functions.
-	for _, epair := range rp.Egress {
+	for i := range rp.Egress {
 		rp.RefInc()
-		epair.F(rp, epair.Dst)
+		rp.Egress[i].Q <- OutputDesc{rp, rp.Egress[i].Dst}
 	}
 	return nil
 }
@@ -70,16 +70,16 @@ func (rp *RtrPkt) RouteResolveSVC() (HookResult, *common.Error) {
 			"actual", rp.dstHost, "type", fmt.Sprintf("%T", rp.dstHost))
 	}
 	intf := conf.C.Net.IFs[*rp.ifCurr]
-	f := callbacks.locOutFs[intf.LocAddrIdx]
+	q := locOutQs[intf.LocAddrIdx]
 	if svc.IsMulticast() {
-		return rp.RouteResolveSVCMulti(svc, f)
+		return rp.RouteResolveSVCMulti(svc, q)
 	}
-	return rp.RouteResolveSVCAny(svc, f)
+	return rp.RouteResolveSVCAny(svc, q)
 }
 
 // RouteResolveSVCAny handles routing a packet to an anycast SVC address (i.e.
 // a single instance of a local infrastructure service).
-func (rp *RtrPkt) RouteResolveSVCAny(svc addr.HostSVC, f OutputFunc) (HookResult, *common.Error) {
+func (rp *RtrPkt) RouteResolveSVCAny(svc addr.HostSVC, q OutputQueue) (HookResult, *common.Error) {
 	names, elemMap, err := getSVCNamesMap(svc)
 	if err != nil {
 		return HookError, err
@@ -89,14 +89,14 @@ func (rp *RtrPkt) RouteResolveSVCAny(svc addr.HostSVC, f OutputFunc) (HookResult
 	name := names[rand.Intn(len(names))]
 	elem := elemMap[name]
 	dst := &net.UDPAddr{IP: elem.Addr.IP, Port: overlay.EndhostPort}
-	rp.Egress = append(rp.Egress, EgressPair{f, dst})
+	rp.Egress = append(rp.Egress, EgressPair{q, dst})
 	return HookContinue, nil
 }
 
 // RouteResolveSVCMulti handles routing a packet to a multicast SVC address
 // (i.e. one packet per machine hosting instances for a local infrastructure
 // service).
-func (rp *RtrPkt) RouteResolveSVCMulti(svc addr.HostSVC, f OutputFunc) (HookResult, *common.Error) {
+func (rp *RtrPkt) RouteResolveSVCMulti(svc addr.HostSVC, q OutputQueue) (HookResult, *common.Error) {
 	_, elemMap, err := getSVCNamesMap(svc)
 	if err != nil {
 		return HookError, err
@@ -110,7 +110,7 @@ func (rp *RtrPkt) RouteResolveSVCMulti(svc addr.HostSVC, f OutputFunc) (HookResu
 		}
 		seen[strIP] = true
 		dst := &net.UDPAddr{IP: elem.Addr.IP, Port: overlay.EndhostPort}
-		rp.Egress = append(rp.Egress, EgressPair{f, dst})
+		rp.Egress = append(rp.Egress, EgressPair{q, dst})
 	}
 	return HookContinue, nil
 }
@@ -144,7 +144,7 @@ func (rp *RtrPkt) forwardFromExternal() (HookResult, *common.Error) {
 				"hopF", rp.hopF)
 		}
 		dst := &net.UDPAddr{IP: rp.dstHost.IP(), Port: overlay.EndhostPort}
-		rp.Egress = append(rp.Egress, EgressPair{callbacks.locOutFs[intf.LocAddrIdx], dst})
+		rp.Egress = append(rp.Egress, EgressPair{locOutQs[intf.LocAddrIdx], dst})
 		return HookContinue, nil
 	}
 	// If this is a cross-over Hop Field, increment the path.
@@ -170,7 +170,7 @@ func (rp *RtrPkt) forwardFromExternal() (HookResult, *common.Error) {
 	}
 	nextBR := conf.C.TopoMeta.IFMap[int(*nextIF)]
 	dst := &net.UDPAddr{IP: nextBR.BasicElem.Addr.IP, Port: nextBR.BasicElem.Port}
-	rp.Egress = append(rp.Egress, EgressPair{callbacks.locOutFs[intf.LocAddrIdx], dst})
+	rp.Egress = append(rp.Egress, EgressPair{locOutQs[intf.LocAddrIdx], dst})
 	return HookContinue, nil
 }
 
@@ -183,6 +183,6 @@ func (rp *RtrPkt) forwardFromLocal() (HookResult, *common.Error) {
 		}
 	}
 	intf := conf.C.Net.IFs[*rp.ifCurr]
-	rp.Egress = append(rp.Egress, EgressPair{callbacks.intfOutFs[*rp.ifCurr], intf.RemoteAddr})
+	rp.Egress = append(rp.Egress, EgressPair{intfOutQs[*rp.ifCurr], intf.RemoteAddr})
 	return HookContinue, nil
 }

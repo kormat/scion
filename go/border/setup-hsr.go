@@ -22,7 +22,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"net"
 	"path/filepath"
 	"strings"
 
@@ -75,9 +74,9 @@ func setupHSRAddLocal(r *Router, idx int, over *overlay.UDP,
 	}
 	hsrAddrMs[hPort] = hsr.AddrMeta{GoAddr: bind,
 		DirFrom: rpkt.DirLocal, IfIDs: ifids, Labels: labels}
-	r.locOutFs[idx] = func(rp *rpkt.RtrPkt, dst *net.UDPAddr) {
-		r.writeHSROutput(rp, dst, hPort, labels)
-	}
+	// Setup output queue & goroutine
+	r.locOutQs[idx] = make(rpkt.OutputQueue, chanBufSize)
+	go r.hsrOutput(r.locOutQs[idx], hPort, labels)
 	return rpkt.HookFinish, nil
 }
 
@@ -90,9 +89,9 @@ func setupHSRAddExt(r *Router, intf *netconf.Interface,
 	}
 	hsrAddrMs[hPort] = hsr.AddrMeta{
 		GoAddr: bind, DirFrom: rpkt.DirExternal, IfIDs: []spath.IntfID{intf.Id}, Labels: labels}
-	r.intfOutFs[intf.Id] = func(rp *rpkt.RtrPkt, dst *net.UDPAddr) {
-		r.writeHSROutput(rp, dst, hPort, labels)
-	}
+	// Setup output queue & goroutine
+	r.intfOutQs[intf.Id] = make(rpkt.OutputQueue, chanBufSize)
+	go r.hsrOutput(r.intfOutQs[intf.Id], hPort, labels)
 	return rpkt.HookFinish, nil
 }
 
@@ -105,9 +104,10 @@ func setupHSRNetFinish(r *Router) (rpkt.HookResult, *common.Error) {
 	if err != nil {
 		return rpkt.HookError, err
 	}
-	q := make(chan *rpkt.RtrPkt, chanBufSize)
-	r.inQs = append(r.inQs, q)
-	go r.readHSRInput(q)
+	// Setup input queue & goroutine for all ports
+	inQ := make(chan *rpkt.RtrPkt, chanBufSize)
+	r.inQs = append(r.inQs, inQ)
+	go r.readHSRInput(inQ)
 	return rpkt.HookContinue, nil
 }
 

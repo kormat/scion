@@ -126,11 +126,11 @@ func (r *Router) createReplyScnPkt(rp *rpkt.RtrPkt) (*spkt.ScnPkt, *common.Error
 func (r *Router) replyEgress(rp *rpkt.RtrPkt) (rpkt.EgressPair, *common.Error) {
 	if rp.DirFrom == rpkt.DirLocal {
 		locIdx := conf.C.Net.LocAddrMap[rp.Ingress.Dst.String()]
-		return rpkt.EgressPair{F: r.locOutFs[locIdx], Dst: rp.Ingress.Src}, nil
+		return rpkt.EgressPair{Q: r.locOutQs[locIdx], Dst: rp.Ingress.Src}, nil
 	}
 	intf, err := rp.IFCurr()
 	if err != nil {
 		return rpkt.EgressPair{}, err
 	}
-	return rpkt.EgressPair{F: r.intfOutFs[*intf], Dst: rp.Ingress.Src}, nil
+	return rpkt.EgressPair{Q: r.intfOutQs[*intf], Dst: rp.Ingress.Src}, nil
 }

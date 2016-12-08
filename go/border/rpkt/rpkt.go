@@ -45,18 +45,18 @@ const pktBufSize = 1 << 16
 // callbacks is an anonymous struct used for functions supplied by the router
 // for various processing tasks.
 var callbacks struct {
-	locOutFs   map[int]OutputFunc
-	intfOutFs  map[spath.IntfID]OutputFunc
 	ifStateUpd func(proto.IFStateInfos)
 	revTokenF  func(common.RawBytes)
 }
+var locOutQs map[int]OutputQueue
+var intfOutQs map[spath.IntfID]OutputQueue
 
 // Init takes callback functions provided by the router and stores them for use
 // by the rpkt package.
-func Init(locOut map[int]OutputFunc, intfOut map[spath.IntfID]OutputFunc,
+func Init(locOut map[int]OutputQueue, intfOut map[spath.IntfID]OutputQueue,
 	ifStateUpd func(proto.IFStateInfos), revTokenF func(common.RawBytes)) {
-	callbacks.locOutFs = locOut
-	callbacks.intfOutFs = intfOut
+	locOutQs = locOut
+	intfOutQs = intfOut
 	callbacks.ifStateUpd = ifStateUpd
 	callbacks.revTokenF = revTokenF
 }
@@ -199,10 +199,17 @@ type addrIFPair struct {
 // OutputFunc is the type of callback required for sending a packet.
 type OutputFunc func(*RtrPkt, *net.UDPAddr)
 
+type OutputDesc struct {
+	Rp  *RtrPkt
+	Dst *net.UDPAddr
+}
+
+type OutputQueue chan OutputDesc
+
 // EgressPair contains the output function to send a packet with, along with an
 // overlay destination address.
 type EgressPair struct {
-	F   OutputFunc
+	Q   OutputQueue
 	Dst *net.UDPAddr
 }
 

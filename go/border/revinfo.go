@@ -101,7 +101,7 @@ func (r *Router) fwdRevInfo(revInfo *proto.RevInfo, dst addr.HostSVC) {
 	}
 	pathMgmt.SetRevInfo(*revInfo)
 	rp.SetPld(&spkt.CtrlPld{SCION: scion})
-	_, err = rp.RouteResolveSVCMulti(dst, r.locOutFs[0])
+	_, err = rp.RouteResolveSVCMulti(dst, r.locOutQs[0])
 	if err != nil {
 		log.Error("Unable to route RevInfo packet", err.Ctx...)
 		return

@@ -21,7 +21,6 @@ package main
 
 import (
 	"fmt"
-	"net"
 
 	log "github.com/inconshreveable/log15"
 	"github.com/prometheus/client_golang/prometheus"
@@ -55,8 +54,8 @@ var setupNetFinishHooks []setupNetHook
 // setup creates the router's channels and map, loads the configuration, and
 // sets up the rpkt package.
 func (r *Router) setup(confDir string) *common.Error {
-	r.locOutFs = make(map[int]rpkt.OutputFunc)
-	r.intfOutFs = make(map[spath.IntfID]rpkt.OutputFunc)
+	r.locOutQs = make(map[int]rpkt.OutputQueue)
+	r.intfOutQs = make(map[spath.IntfID]rpkt.OutputQueue)
 	r.freePkts = make(chan *rpkt.RtrPkt, 1024)
 	r.revInfoQ = make(chan common.RawBytes)
 
@@ -67,7 +66,7 @@ func (r *Router) setup(confDir string) *common.Error {
 	log.Debug("AS Conf loaded", "conf", conf.C.ASConf)
 
 	// Configure the rpkt package with the callbacks it needs.
-	rpkt.Init(r.locOutFs, r.intfOutFs, r.ProcessIFStates, r.RevTokenCallback)
+	rpkt.Init(r.locOutQs, r.intfOutQs, r.ProcessIFStates, r.RevTokenCallback)
 	return nil
 }
 
@@ -169,16 +168,13 @@ func setupPosixAddLocal(r *Router, idx int, over *overlay.UDP,
 			ifids = append(ifids, intf.Id)
 		}
 	}
-	// Create a channel for this socket.
-	q := make(chan *rpkt.RtrPkt, chanBufSize)
-	r.inQs = append(r.inQs, q)
-	// Start an input goroutine for the socket.
-	go r.readPosixInput(over.Conn, rpkt.DirLocal, ifids, labels, q)
-	// Add an output callback for the socket.
-	r.locOutFs[idx] = r.mkPosixOutput(labels,
-		func(b common.RawBytes, dst *net.UDPAddr) (int, error) {
-			return over.Conn.WriteToUDP(b, dst)
-		})
+	// Setup input queue & goroutine
+	inQ := make(chan *rpkt.RtrPkt, chanBufSize)
+	r.inQs = append(r.inQs, inQ)
+	go r.readPosixInput(over.Conn, rpkt.DirLocal, ifids, labels, inQ)
+	// Setup output queue & goroutine
+	r.locOutQs[idx] = make(rpkt.OutputQueue, chanBufSize)
+	go r.posixLocalOutput(r.locOutQs[idx], over.Conn, labels)
 	return rpkt.HookFinish, nil
 }
 
@@ -189,18 +185,12 @@ func setupPosixAddExt(r *Router, intf *netconf.Interface,
 	if err := intf.IFAddr.Connect(intf.RemoteAddr); err != nil {
 		return rpkt.HookError, common.NewError("Unable to listen on external socket", "err", err)
 	}
-	// Create a channel for this socket.
+	// Setup input queue & goroutine
 	q := make(chan *rpkt.RtrPkt, chanBufSize)
 	r.inQs = append(r.inQs, q)
-	// Start an input goroutine for the socket.
 	go r.readPosixInput(intf.IFAddr.Conn, rpkt.DirExternal, []spath.IntfID{intf.Id}, labels, q)
-	// Add an output callback for the socket.
-	conn := intf.IFAddr.Conn
-	r.intfOutFs[intf.Id] = r.mkPosixOutput(labels,
-		func(b common.RawBytes, _ *net.UDPAddr) (int, error) {
-			// An interface can only send packets to a fixed remote address, so
-			// ignore the UDPAddr arg.
-			return conn.Write(b)
-		})
+	// Setup output queue & goroutine
+	r.intfOutQs[intf.Id] = make(rpkt.OutputQueue, chanBufSize)
+	go r.posixIntfOutput(r.intfOutQs[intf.Id], intf.IFAddr.Conn, labels)
 	return rpkt.HookFinish, nil
 }

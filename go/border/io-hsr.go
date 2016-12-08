@@ -100,3 +100,18 @@ func (r *Router) writeHSROutput(rp *rpkt.RtrPkt, dst *net.UDPAddr, portID int,
 	metrics.BytesSent.With(labels).Add(float64(len(rp.Raw)))
 	metrics.PktsSent.With(labels).Inc()
 }
+
+func (r *Router) hsrOutput(q rpkt.OutputQueue, portID int, labels prometheus.Labels) {
+	outProcTime := metrics.OutputProcessTime.With(labels)
+	bytesSent := metrics.BytesSent.With(labels)
+	pktsSent := metrics.PktsSent.With(labels)
+	for d := range q {
+		start := time.Now()
+		hsr.SendPacket(d.Dst, portID, d.Rp.Raw)
+		t := time.Now().Sub(start).Seconds()
+		outProcTime.Add(t)
+		bytesSent.Add(float64(len(d.Rp.Raw)))
+		pktsSent.Inc()
+		r.recyclePkt(d.Rp)
+	}
+}

@@ -64,7 +64,7 @@ func (r *Router) GenIFIDPkt(ifid spath.IntfID) {
 		logger.Error("Error creating IFID packet", err.Ctx...)
 		return
 	}
-	rp.Egress = append(rp.Egress, rpkt.EgressPair{F: r.intfOutFs[ifid], Dst: intf.RemoteAddr})
+	rp.Egress = append(rp.Egress, rpkt.EgressPair{Q: r.intfOutQs[ifid], Dst: intf.RemoteAddr})
 	// Create IFID msg
 	scion, ifidMsg, err := proto.NewIFIDMsg()
 	if err != nil {

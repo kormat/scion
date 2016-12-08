@@ -70,13 +70,55 @@ func (r *Router) readPosixInput(in *net.UDPConn, dirFrom rpkt.Dir, ifids []spath
 
 type posixOutputFunc func(common.RawBytes, *net.UDPAddr) (int, error)
 
-// XXXXXXX writePosixOutput writes packets to a POSIX(/BSD) socket using the provided
-// function (a wrapper around net.UDPConn.WriteToUDP or net.UDPConn.Write).
-func (r *Router) mkPosixOutput(labels prometheus.Labels, f posixOutputFunc) rpkt.OutputFunc {
+func (r *Router) posixLocalOutput(q rpkt.OutputQueue, conn *net.UDPConn, labels prometheus.Labels) {
 	outProcTime := metrics.OutputProcessTime.With(labels)
 	bytesSent := metrics.BytesSent.With(labels)
 	pktsSent := metrics.PktsSent.With(labels)
-	return func(rp *rpkt.RtrPkt, dst *net.UDPAddr) {
+	for d := range q {
+		start := time.Now()
+		if count, err := conn.WriteToUDP(d.Rp.Raw, d.Dst); err != nil {
+			d.Rp.Error("Error sending packet", "err", err, "dst", d.Dst)
+		} else if count != len(d.Rp.Raw) {
+			d.Rp.Error("Unable to write full packet", "len", len(d.Rp.Raw), "written", count)
+		} else {
+			t := time.Now().Sub(start).Seconds()
+			outProcTime.Add(t)
+			bytesSent.Add(float64(len(d.Rp.Raw)))
+			pktsSent.Inc()
+		}
+		r.recyclePkt(d.Rp)
+	}
+}
+
+func (r *Router) posixIntfOutput(q rpkt.OutputQueue, conn *net.UDPConn, labels prometheus.Labels) {
+	outProcTime := metrics.OutputProcessTime.With(labels)
+	bytesSent := metrics.BytesSent.With(labels)
+	pktsSent := metrics.PktsSent.With(labels)
+	for d := range q {
+		start := time.Now()
+		if count, err := conn.Write(d.Rp.Raw); err != nil {
+			d.Rp.Error("Error sending packet", "err", err, "dst", conn.RemoteAddr())
+		} else if count != len(d.Rp.Raw) {
+			d.Rp.Error("Unable to write full packet", "len", len(d.Rp.Raw), "written", count)
+		} else {
+			t := time.Now().Sub(start).Seconds()
+			outProcTime.Add(t)
+			bytesSent.Add(float64(len(d.Rp.Raw)))
+			pktsSent.Inc()
+		}
+		r.recyclePkt(d.Rp)
+	}
+}
+
+// XXXXXXX writePosixOutput writes packets to a POSIX(/BSD) socket using the provided
+// function (a wrapper around net.UDPConn.WriteToUDP or net.UDPConn.Write).
+/*
+func (r *Router) mkPosixOutput(labels prometheus.Labels, f posixOutputFunc, q rpkt.OutputQueue) {
+	outProcTime := metrics.OutputProcessTime.With(labels)
+	bytesSent := metrics.BytesSent.With(labels)
+	pktsSent := metrics.PktsSent.With(labels)
+	go func() {
+		for {
 		defer r.recyclePkt(rp)
 		start := time.Now()
 		if count, err := f(rp.Raw, dst); err != nil {
@@ -90,5 +132,6 @@ func (r *Router) mkPosixOutput(labels prometheus.Labels, f posixOutputFunc) rpkt
 		outProcTime.Add(t)
 		bytesSent.Add(float64(len(rp.Raw)))
 		pktsSent.Inc()
-	}
+	}()
 }
+*/

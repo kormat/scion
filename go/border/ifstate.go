@@ -79,7 +79,7 @@ func (r *Router) GenIFStateReq() {
 		return
 	}
 	rp.SetPld(&spkt.CtrlPld{SCION: scion})
-	_, err = rp.RouteResolveSVCMulti(dstHost, r.locOutFs[0])
+	_, err = rp.RouteResolveSVCMulti(dstHost, r.locOutQs[0])
 	if err != nil {
 		log.Error("Unable to route IFStateReq packet", err.Ctx...)
 	}

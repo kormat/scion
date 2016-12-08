@@ -40,10 +40,10 @@ type Router struct {
 	// locOutFs is a slice of functions for sending packets to local
 	// destinations (i.e. within the local ISD-AS), indexed by the local
 	// address id.
-	locOutFs map[int]rpkt.OutputFunc
+	locOutQs map[int]rpkt.OutputQueue
 	// intfOutFs is a slice of functions for sending packets to neighbouring
 	// ISD-ASes, indexed by the interface ID of the relevant link.
-	intfOutFs map[spath.IntfID]rpkt.OutputFunc
+	intfOutQs map[spath.IntfID]rpkt.OutputQueue
 	// freePkts is a buffered channel for recycled packets. See
 	// Router.recyclePkt
 	freePkts chan *rpkt.RtrPkt
