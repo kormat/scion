@@ -68,11 +68,13 @@ func (r *Router) readHSRInput(q chan *rpkt.RtrPkt) {
 			rp.TimeIn = timeIn
 			// Process packet.
 			q <- rp
-			rpkts[i] = r.getPktBuf()
 			//r.processPacket(rp)
 			//metrics.PktProcessTime.Add(time.Now().Sub(rp.TimeIn).Seconds())
 			// Reset packet.
 			//rp.Reset()
+		}
+		for i := 0; i < count; i++ {
+			rpkts[i] = r.getPktBuf()
 		}
 		// Update port metrics
 		duration := timeIn.Sub(start).Seconds()
