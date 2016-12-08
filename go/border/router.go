@@ -67,6 +67,7 @@ func (r *Router) Run() *common.Error {
 	go r.SyncInterface()
 	go r.IFStateUpdate()
 	go r.RevInfoFwd()
+	go r.handleQueue(r.inQ)
 	r.handleQueue(r.inQ)
 	return nil
 }
