@@ -39,7 +39,7 @@ import (
 // is only updated once), readHSRInput uses a map of port IDs to keep track of
 // which metrics need updating.
 // FIXME(kormat): the chan argument is currently unused.
-func (r *Router) readHSRInput(_ chan *rpkt.RtrPkt) {
+func (r *Router) readHSRInput(q chan *rpkt.RtrPkt) {
 	defer liblog.PanicLog()
 	// Allocate slice of empty packets.
 	rpkts := make([]*rpkt.RtrPkt, hsr.MaxPkts)
@@ -67,10 +67,12 @@ func (r *Router) readHSRInput(_ chan *rpkt.RtrPkt) {
 			rp := rpkts[i]
 			rp.TimeIn = timeIn
 			// Process packet.
-			r.processPacket(rp)
-			metrics.PktProcessTime.Add(time.Now().Sub(rp.TimeIn).Seconds())
+			q <- rp
+			rpkts[i] = r.getPktBuf()
+			//r.processPacket(rp)
+			//metrics.PktProcessTime.Add(time.Now().Sub(rp.TimeIn).Seconds())
 			// Reset packet.
-			rp.Reset()
+			//rp.Reset()
 		}
 		// Update port metrics
 		duration := timeIn.Sub(start).Seconds()
