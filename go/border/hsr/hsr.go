@@ -70,8 +70,27 @@ type AddrMeta struct {
 	// IfIDs is a list of matching interface IDs. Local (i.e. facing the local
 	// AS) addresses can have multiple interfaces associated with them.
 	IfIDs []spath.IntfID
-	// Labels is a set of prometheus labels to apply to packets using this port.
-	Labels prometheus.Labels
+	// Prometheus metrics. See go/border/metrics for details
+	PktsRecv          prometheus.Counter
+	BytesRecv         prometheus.Counter
+	PktsSent          prometheus.Counter
+	BytesSent         prometheus.Counter
+	InputLoops        prometheus.Counter
+	InputProcessTime  prometheus.Counter
+	OutputProcessTime prometheus.Counter
+}
+
+func NewAddrMeta(goAddr *net.UDPAddr, dirFrom rpkt.Dir, ifids []spath.IntfID,
+	labels prometheus.Labels) AddrMeta {
+	return AddrMeta{GoAddr: goAddr, DirFrom: dirFrom, IfIDs: ifids,
+		PktsRecv:          metrics.PktsRecv.With(labels),
+		BytesRecv:         metrics.BytesRecv.With(labels),
+		PktsSent:          metrics.PktsSent.With(labels),
+		BytesSent:         metrics.BytesSent.With(labels),
+		InputLoops:        metrics.InputLoops.With(labels),
+		InputProcessTime:  metrics.InputProcessTime.With(labels),
+		OutputProcessTime: metrics.OutputProcessTime.With(labels),
+	}
 }
 
 // Slice of AddrMetas, indexed by the libhsr port ID.
@@ -158,8 +177,8 @@ func (h *HSR) GetPackets(rps []*rpkt.RtrPkt, usedPorts []bool) (int, *common.Err
 	count := int(C.get_packets(unsafe.Pointer(&h.InPkts), C.int(*hsrInMin),
 		C.int(len(rps)), C.int(*hsrInTout)))
 	for i := 0; i < count; i++ {
-		rp := rps[i]      // Go packet.
-		cp := h.InPkts[i] // C packet.
+		rp := rps[i]       // Go packet.
+		cp := &h.InPkts[i] // C packet.
 		// Trim Go buffer to the length reported by libhsr.
 		rp.Raw = rp.Raw[:int(cp.buflen)]
 		// Convert the source address from C to Go.
@@ -174,9 +193,8 @@ func (h *HSR) GetPackets(rps []*rpkt.RtrPkt, usedPorts []bool) (int, *common.Err
 		// Indicate this port was used
 		usedPorts[cp.port_id] = true
 		// Update global packet/byte counters
-		labels := AddrMs[cp.port_id].Labels
-		metrics.PktsRecv.With(labels).Inc()
-		metrics.BytesRecv.With(labels).Add(float64(len(rp.Raw)))
+		AddrMs[cp.port_id].PktsRecv.Inc()
+		AddrMs[cp.port_id].BytesRecv.Add(float64(len(rp.Raw)))
 	}
 	return count, nil
 }

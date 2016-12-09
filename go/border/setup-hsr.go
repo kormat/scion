@@ -72,11 +72,10 @@ func setupHSRAddLocal(r *Router, idx int, over *overlay.UDP,
 			ifids = append(ifids, intf.Id)
 		}
 	}
-	hsrAddrMs[hPort] = hsr.AddrMeta{GoAddr: bind,
-		DirFrom: rpkt.DirLocal, IfIDs: ifids, Labels: labels}
+	hsrAddrMs[hPort] = hsr.NewAddrMeta(bind, rpkt.DirLocal, ifids, labels)
 	// Setup output queue & goroutine
 	r.locOutQs[idx] = make(rpkt.OutputQueue, chanBufSize)
-	go r.hsrOutput(r.locOutQs[idx], hPort, labels)
+	go r.hsrOutput(r.locOutQs[idx], hPort)
 	return rpkt.HookFinish, nil
 }
 
@@ -87,11 +86,10 @@ func setupHSRAddExt(r *Router, intf *netconf.Interface,
 	if hPort < 0 {
 		return rpkt.HookContinue, nil
 	}
-	hsrAddrMs[hPort] = hsr.AddrMeta{
-		GoAddr: bind, DirFrom: rpkt.DirExternal, IfIDs: []spath.IntfID{intf.Id}, Labels: labels}
+	hsrAddrMs[hPort] = hsr.NewAddrMeta(bind, rpkt.DirExternal, []spath.IntfID{intf.Id}, labels)
 	// Setup output queue & goroutine
 	r.intfOutQs[intf.Id] = make(rpkt.OutputQueue, chanBufSize)
-	go r.hsrOutput(r.intfOutQs[intf.Id], hPort, labels)
+	go r.hsrOutput(r.intfOutQs[intf.Id], hPort)
 	return rpkt.HookFinish, nil
 }
 

@@ -19,14 +19,11 @@
 package main
 
 import (
-	"net"
 	"time"
 
 	log "github.com/inconshreveable/log15"
-	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/netsec-ethz/scion/go/border/hsr"
-	"github.com/netsec-ethz/scion/go/border/metrics"
 	"github.com/netsec-ethz/scion/go/border/rpkt"
 	"github.com/netsec-ethz/scion/go/lib/log"
 )
@@ -81,37 +78,35 @@ func (r *Router) readHSRInput(q chan *rpkt.RtrPkt) {
 		for id := range usedPorts {
 			if usedPorts[id] {
 				usedPorts[id] = false
-				labels := hsr.AddrMs[id].Labels
-				metrics.InputLoops.With(labels).Inc()
-				metrics.InputProcessTime.With(labels).Add(duration)
+				hsr.AddrMs[id].InputLoops.Inc()
+				hsr.AddrMs[id].InputProcessTime.Add(duration)
 			}
 		}
 	}
 }
 
 // writeHSROutput sends a single output packet via libhsr.
+/*
 func (r *Router) writeHSROutput(rp *rpkt.RtrPkt, dst *net.UDPAddr, portID int,
 	labels prometheus.Labels) {
 	start := time.Now()
 	defer r.recyclePkt(rp)
 	hsr.SendPacket(dst, portID, rp.Raw)
 	duration := time.Now().Sub(start).Seconds()
-	metrics.OutputProcessTime.With(labels).Add(duration)
-	metrics.BytesSent.With(labels).Add(float64(len(rp.Raw)))
-	metrics.PktsSent.With(labels).Inc()
+	hsr.AddrMs[portID].OutputProcessTime.Add(duration)
+	hsr.AddrMs[portID].BytesSent.Add(float64(len(rp.Raw)))
+	hsr.AddrMs[portID].PktsSent.Inc()
 }
+*/
 
-func (r *Router) hsrOutput(q rpkt.OutputQueue, portID int, labels prometheus.Labels) {
-	outProcTime := metrics.OutputProcessTime.With(labels)
-	bytesSent := metrics.BytesSent.With(labels)
-	pktsSent := metrics.PktsSent.With(labels)
+func (r *Router) hsrOutput(q rpkt.OutputQueue, portID int) {
 	for d := range q {
 		start := time.Now()
 		hsr.SendPacket(d.Dst, portID, d.Rp.Raw)
 		t := time.Now().Sub(start).Seconds()
-		outProcTime.Add(t)
-		bytesSent.Add(float64(len(d.Rp.Raw)))
-		pktsSent.Inc()
+		hsr.AddrMs[portID].OutputProcessTime.Add(t)
+		hsr.AddrMs[portID].PktsSent.Inc()
+		hsr.AddrMs[portID].BytesSent.Add(float64(len(d.Rp.Raw)))
 		r.recyclePkt(d.Rp)
 	}
 }
