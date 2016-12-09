@@ -123,6 +123,7 @@ type HSR struct {
 	// pointers are set to point to Go RtrPkt.Raw buffers, so libhsr is writing
 	// directly into Go structs, avoiding a lot of copying overhead.
 	InPkts [MaxPkts]C.RouterPacket
+	Srcs   [MaxPkts]net.UDPAddr
 }
 
 func NewHSR() *HSR {
@@ -131,6 +132,7 @@ func NewHSR() *HSR {
 	for i := range h.InPkts {
 		h.InPkts[i].src = &C.saddr_storage{}
 		h.InPkts[i].dst = &C.saddr_storage{}
+		h.Srcs[i] = net.UDPAddr{}
 	}
 	return &h
 }
@@ -161,7 +163,7 @@ func (h *HSR) GetPackets(rps []*rpkt.RtrPkt, usedPorts []bool) (int, *common.Err
 		// Trim Go buffer to the length reported by libhsr.
 		rp.Raw = rp.Raw[:int(cp.buflen)]
 		// Convert the source address from C to Go.
-		rp.Ingress.Src = &net.UDPAddr{}
+		rp.Ingress.Src = &h.Srcs[i]
 		if err := saddrToUDPAddr(rp.Ingress.Src, cp.src); err != nil {
 			return i, err
 		}
