@@ -46,7 +46,9 @@
 #define ERR_MW -127  /* API/TCP middleware error. */
 #define ERR_SYS -128  /* All system errors are mapped to this LWIP's code. */
 #define TCP_POLLING_TOUT 15 /* Polling timeout (in ms) used within tcpmw_pipe_loop */
+/* Note: the timeout is so high only due to CircleCI. Decrease it to get better performance */
 #define ACCEPT_TOUT 150 /* Polling timeout (in ms) used within tcpmw_accept */
+#define CMD_SIZE_PIPEMODE (CMD_SIZE + 4)
 
 /* Middleware API commands */
 #define CMD_ACCEPT "ACCE"
@@ -60,6 +62,9 @@
 #define CMD_SET_OPT "SOPT"
 #define CMD_RESET_OPT "ROPT"
 #define CMD_GET_OPT "GOPT"
+/* These two commands are handled in the pipe mode. */
+#define CMD_SET_PATH "PATH"
+#define CMD_SEND "SEND"
 
 #define CMD_CMP(buf, cmd) (!strncmp(buf, cmd, CMD_SIZE))
 
@@ -68,6 +73,14 @@ zlog_category_t *zc_tcp;
 struct conn_args{
     int fd;
     struct netconn *conn;
+};
+
+struct cmd_state{
+    char buf[TCPMW_BUFLEN];
+    int cmd_to_read; /* Number of bytes to be read from the app socket to execute a command */
+    int send_to_read; /* Number of bytes to be read to finish a SEND command */
+    int path_to_read; /* Number of bytes to be read to finish a PATH command */
+    int path_read;  /* Number of read bytes of an incomplete PATH command */
 };
 
 void *tcpmw_main_thread(void *);
@@ -89,7 +102,11 @@ void tcpmw_terminate(struct conn_args *);
 int tcpmw_read_cmd(int, char *);
 void tcpmw_unlink_sock(void);
 void *tcpmw_pipe_loop(void *);
-int tcpmw_from_app_sock(struct conn_args *);
+int tcpmw_read_cmd_pipemode(struct conn_args *, struct cmd_state *);
+int tcpmw_from_app_sock(struct conn_args *, struct cmd_state *);
 int tcpmw_from_tcp_sock(struct conn_args *);
+int tcpmw_set_path(struct conn_args *, struct cmd_state *);
+int recv_tout(int, char *, int);
+void reset_cmd_state(struct cmd_state *);
 
 #endif

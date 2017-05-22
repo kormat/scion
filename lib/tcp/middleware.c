@@ -55,7 +55,6 @@ void *tcpmw_main_thread(void *unused) {
         zlog_fatal(zc_tcp, "tcpmw_main_thread: bind(): %s", strerror(errno));
         exit(-1);
     }
-    zlog_info(zc_tcp, "tcpmw_main_thread: bound to %s", sock_path);
 
     if (listen(fd, 5) == -1) {
         zlog_fatal(zc_tcp, "tcpmw_main_thread: listen(): %s", strerror(errno));
@@ -105,7 +104,6 @@ void tcpmw_socket(int fd){
                    CMD_SIZE, buf, pld_len);
         goto close;
     }
-    zlog_info(zc_tcp, "NEWS received");
 
     if ((conn = netconn_new(NETCONN_TCP)) == NULL){
         lwip_err = ERR_NEW;
@@ -219,7 +217,6 @@ void tcpmw_bind(struct conn_args *args, char *buf, int len){
     char *p = buf;
     s8_t lwip_err = 0;
 
-    zlog_info(zc_tcp, "BIND received");
     if ((len < 5 + ADDR_NONE_LEN) || (len > 5 + ADDR_IPV6_LEN)){
         lwip_err = ERR_MW;
         zlog_error(zc_tcp, "tcpmw_bind(): wrong payload length");
@@ -238,10 +235,11 @@ void tcpmw_bind(struct conn_args *args, char *buf, int len){
         goto exit;
     }
     char host_str[MAX_HOST_ADDR_STR];
-    uint32_t isd_as = *(uint32_t*)addr.addr;
-    format_host(addr.type, addr.addr, host_str, sizeof(host_str));
-    zlog_info(zc_tcp, "tcpmw_bind(): bound:%d-%d, %s port %d, svc: %d",
-              ISD(isd_as), AS(isd_as), host_str, port, svc);
+    char svcstr[MAX_HOST_ADDR_STR];
+    uint32_t isd_as = ntohl(*(uint32_t*)addr.addr);
+    format_host(addr.type, addr.addr + ISD_AS_LEN, host_str, sizeof(host_str));
+    zlog_info(zc_tcp, "tcpmw_bind(): (%d,%d):%s port:%d, svc: %s",
+              ISD(isd_as), AS(isd_as), host_str, port, svc_to_str(ntohs(svc), svcstr));
 
 exit:
     tcpmw_reply(args, CMD_BIND, lwip_err);
@@ -261,7 +259,6 @@ void tcpmw_connect(struct conn_args *args, char *buf, int len){
         goto exit;
     }
 
-    zlog_info(zc_tcp, "CONN received");
     port = *((u16_t *)p);
     p += 2;  /* skip port */
     path_len = *((u16_t *)p);
@@ -284,7 +281,6 @@ void tcpmw_connect(struct conn_args *args, char *buf, int len){
     memcpy(path->raw_path, p, path_len);
     path->len = path_len;
     args->conn->pcb.ip->path = path;
-    zlog_info(zc_tcp, "Path added, len %d", path_len);
     p += path_len;  /* skip path */
 
     scion_addr_from_raw(&addr, p[0], p + 1);
@@ -309,7 +305,6 @@ exit:
 
 void tcpmw_listen(struct conn_args *args, int len){
     s8_t lwip_err = 0;
-    zlog_info(zc_tcp, "LIST received");
     if (len){
         lwip_err = ERR_MW;
         zlog_error(zc_tcp, "tcpmw_listen(): incorrect payload length %d", len);
@@ -330,7 +325,6 @@ void tcpmw_accept(struct conn_args *args, char *buf, int len){
     s8_t lwip_err = 0;
 
     int sys_err = 0;
-    zlog_info(zc_tcp, "ACCE received");
     if (len != SOCK_PATH_LEN){
         lwip_err = ERR_MW;
         zlog_error(zc_tcp, "tcpmw_accept(): incorrect payload length %.*s", len, buf);
@@ -346,7 +340,6 @@ void tcpmw_accept(struct conn_args *args, char *buf, int len){
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
     sprintf(addr.sun_path, "%s/%.*s", LWIP_SOCK_DIR, SOCK_PATH_LEN, buf);
-    zlog_info(zc_tcp, "connecting to %s", addr.sun_path);
     if ((new_fd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1) {
         sys_err = errno;
         zlog_error(zc_tcp, "tcpmw_accept(): socket(): %s", strerror(errno));
@@ -468,7 +461,6 @@ void *tcpmw_pipe_loop(void *data){
     /* Set timeouts for receiving from app and TCP socket */
     struct timeval timeout;
 
-    zlog_debug(zc_tcp, "Entered pipe mode");
     timeout.tv_sec = 0;
     timeout.tv_usec = TCP_POLLING_TOUT*1000;
     if (setsockopt(args->fd, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout)) < 0){
@@ -478,9 +470,20 @@ void *tcpmw_pipe_loop(void *data){
     netconn_set_recvtimeout(args->conn, TCP_POLLING_TOUT);
 
     /* Main loop */
+    struct cmd_state state;
+    reset_cmd_state(&state);
     while (1){
-        if (tcpmw_from_app_sock(args))
-            break;
+        /* Serve app's side first */
+        if (state.cmd_to_read)
+            if (tcpmw_read_cmd_pipemode(args, &state))
+                break;
+        if (state.send_to_read)
+            if (tcpmw_from_app_sock(args, &state))
+                break;
+        if (state.path_to_read)
+            if (tcpmw_set_path(args, &state))
+                break;
+        /* Now try to read from netconn's TCP socket */
         if (tcpmw_from_tcp_sock(args))
             break;
     }
@@ -489,38 +492,104 @@ void *tcpmw_pipe_loop(void *data){
     return NULL;
 }
 
-int tcpmw_from_app_sock(struct conn_args *args){
-    char buf[TCPMW_BUFLEN];
+void reset_cmd_state(struct cmd_state *state){
+    state->cmd_to_read = CMD_SIZE_PIPEMODE;
+    state->send_to_read = 0;
+    state->path_to_read = 0;
+    state->path_read = 0;
+}
+
+int tcpmw_read_cmd_pipemode(struct conn_args *args, struct cmd_state *state){
+    /* Read command. */
+    int offset = CMD_SIZE_PIPEMODE - state->cmd_to_read;
+    int recvd = recv_tout(args->fd, state->buf + offset, state->cmd_to_read);
+    if (recvd < 0)
+        return -1; /* Error on reading */
+
+    state->cmd_to_read -= recvd;
+    if (state->cmd_to_read)
+        return 0; /* More bytes need to be read, leave for now */
+
+    /* Command is read, check it */
+    int cmd_len = *(uint32_t*)(state->buf + CMD_SIZE);
+    if (CMD_CMP(state->buf, CMD_SEND))
+        state->send_to_read = cmd_len;
+    else if (CMD_CMP(state->buf, CMD_SET_PATH))
+        state->path_to_read = cmd_len;
+    else{
+        zlog_error(zc_tcp, "tcpmw_read_cmd_pipemode(): command not found: %.*s (%dB)",
+                   CMD_SIZE, state->buf, CMD_SIZE);
+        return -1;
+    }
+    return 0;
+}
+
+int tcpmw_set_path(struct conn_args *args, struct cmd_state *state){
+    /* tcpmw_set_path() is called in the pipe mode, thus nothing is returned to
+     * the app. Requests have the following format: */
+    /* | path (var) | first_hop_ip (4B) | first_hop_port (2B) | */
+
+    /* First, validate length */
+    int tot_len = state->path_read + state->path_to_read;
+    if (tot_len < 6 || tot_len > TCPMW_BUFLEN){
+        zlog_error(zc_tcp, "tcpmw_set_path(): incorrect payload length: %dB", tot_len);
+        return -1; /* Error on reading */
+    }
+
+    /* Read the request */
+    int recvd = recv_tout(args->fd, state->buf + state->path_read, state->path_to_read);
+    if (recvd < 0)
+        return -1;
+
+    state->path_read += recvd;
+    state->path_to_read -= recvd;
+    if (state->path_to_read)
+        return 0; /* More bytes need to be read, leave for now */
+
+    /* Add path to the TCP/IP state */
+    char *p = state->buf;
+    u16_t path_len = tot_len - 6;
+    spath_t path = {.raw_path= (uint8_t*)p, .len=path_len};
+    p += path_len;  /* skip the path */
+
+    /* Set first hop. TODO(PSz): don't assume IPv4 */
+    path.first_hop.addr_type = ADDR_IPV4_TYPE;
+    memcpy(path.first_hop.addr, p, 4);
+    path.first_hop.port = *(uint16_t *)(p + 4);
+
+    s8_t lwip_err = 0;
+    if ((lwip_err = netconn_set_path(args->conn, &path)) != ERR_OK){
+        zlog_error(zc_tcp, "tcpmw_set_path(): netconn_set_path(): %s", lwip_strerr(lwip_err));
+        return -1; /* FIXME(PSz): or warning and ignore (i.e., return 0)? */
+    }
+    /* Command executed successfully, reset the cmd state */
+    reset_cmd_state(state);
+    return 0;
+}
+
+int tcpmw_from_app_sock(struct conn_args *args, struct cmd_state *state){
     s8_t lwip_err = 0;
     size_t tmp_sent, sent = 0;
-    /* zlog_info(zc_tcp, "SEND received (%dB to send)", len); */
-    int len = recv(args->fd, buf, TCPMW_BUFLEN, 0);
-    if (len == 0)  /* Done */
+    /* Minimum to read */
+    int to_read = (TCPMW_BUFLEN < state->send_to_read ? TCPMW_BUFLEN : state->send_to_read);
+
+    int len = recv_tout(args->fd, state->buf, to_read);
+    if (len < 0)
         return -1;
-    if (len < 0){
-        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ETIMEDOUT){
-            zlog_debug(zc_tcp, "tcpmw_from_app_sock(): timeout");
-            return 0;
-        }
-        else{
-            zlog_error(zc_tcp, "tcpmw_from_app_sock(): recv(): %s", strerror(errno));
-            return -1;
-        }
-    }
-    zlog_debug(zc_tcp, "tcpmw_from_app_sock(): received from app %dB.", len);
+
     /* This is implemented more like send_all(). */
     while (sent < len){
-        lwip_err = netconn_write_partly(args->conn, buf + sent, len - sent, NETCONN_COPY, &tmp_sent);
+        lwip_err = netconn_write_partly(args->conn, state->buf + sent, len - sent, NETCONN_COPY, &tmp_sent);
         if (lwip_err != ERR_OK){
             zlog_error(zc_tcp, "tcpmw_from_app_sock(): netconn_write(): %s", lwip_strerr(lwip_err));
-            zlog_debug(zc_tcp, "netconn_write(): total_sent/tmp_sent/total_len: %zu/%zu/%d",
-                       sent, tmp_sent, len);
             return -1;
         }
         sent += tmp_sent;
-        zlog_debug(zc_tcp, "netconn_write(): total_sent/tmp_sent/total_len: %zu/%zu/%d",
-                   sent, tmp_sent, len);
     }
+    /* Command executed successfully, check the cmd state */
+    state->send_to_read -= len;
+    if (!state->send_to_read)
+        reset_cmd_state(state); /* Reset the state as sending is done */
     return 0;
 }
 
@@ -559,7 +628,6 @@ int tcpmw_from_tcp_sock(struct conn_args *args){
 
 void tcpmw_set_recv_tout(struct conn_args *args, char *buf, int len){
     s8_t lwip_err = 0;
-    zlog_info(zc_tcp, "SRTO received");
     if (len != 4){
         lwip_err = ERR_MW;
         zlog_error(zc_tcp, "tcpmw_set_recv_tout(): incorrect SRTO length");
@@ -582,7 +650,6 @@ void tcpmw_get_recv_tout(struct conn_args *args, int len){
         return;
     }
 
-    zlog_info(zc_tcp, "GRTO received");
     int timeout = netconn_get_recvtimeout(args->conn);
     u8_t msg[PLD_SIZE + RESP_SIZE + 4];
     *(u16_t*)msg = 4;  /* Payload size */
@@ -597,7 +664,6 @@ void tcpmw_get_recv_tout(struct conn_args *args, int len){
 
 void tcpmw_set_sock_opt(struct conn_args *args, char *buf, int len){
     s8_t lwip_err = 0;
-    zlog_info(zc_tcp, "SOPT received");
     if (len != 2){
         lwip_err = ERR_MW;
         zlog_error(zc_tcp, "tcpmw_set_sock_opt(): incorrect SOPT length");
@@ -613,7 +679,6 @@ exit:
 
 void tcpmw_reset_sock_opt(struct conn_args *args, char *buf, int len){
     s8_t lwip_err = 0;
-    zlog_info(zc_tcp, "ROPT received");
     if (len != 2){
         lwip_err = ERR_MW;
         zlog_error(zc_tcp, "tcpmw_set_sock_opt(): incorrect SOPT length");
@@ -629,7 +694,6 @@ exit:
 
 void tcpmw_get_sock_opt(struct conn_args *args, char *buf, int len){
     s8_t lwip_err = 0;
-    zlog_info(zc_tcp, "GOPT received");
     if (len != 2){
         lwip_err = ERR_MW;
         zlog_error(zc_tcp, "tcpmw_get_sock_opt(): incorrect GOPT length");
@@ -664,4 +728,20 @@ void tcpmw_close(struct conn_args *args){
     netconn_delete(args->conn);
     args->conn = NULL;
     free(args);
+}
+
+int recv_tout(int fd, char *buf, int to_read){
+    int len = recv(fd, buf, to_read, 0);
+    if (len == 0)  /* Done */
+        return -1;
+    if (len < 0){
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ETIMEDOUT){
+            return 0;
+        }
+        else{
+            zlog_error(zc_tcp, "recv_tout(): recv(): %s", strerror(errno));
+            return -1;
+        }
+    }
+    return len;
 }
