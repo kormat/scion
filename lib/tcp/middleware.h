@@ -63,8 +63,8 @@
 #define CMD_RESET_OPT "ROPT"
 #define CMD_GET_OPT "GOPT"
 /* These two commands are handled in the pipe mode. */
-#define CMD_SET_PATH "PATH"
-#define CMD_SEND "SEND"
+#define CMD_PATH "PATH"
+#define CMD_DATA "DATA"
 
 #define CMD_CMP(buf, cmd) (!strncmp(buf, cmd, CMD_SIZE))
 
@@ -75,12 +75,16 @@ struct conn_args{
     struct netconn *conn;
 };
 
+#define CMD_STATE_UNSET 0
+#define CMD_STATE_DATA 1
+#define CMD_STATE_PATH 2
+
 struct cmd_state{
+    int cmd;
     char buf[TCPMW_BUFLEN];
-    int cmd_to_read; /* Number of bytes to be read from the app socket to execute a command */
-    int send_to_read; /* Number of bytes to be read to finish a SEND command */
-    int path_to_read; /* Number of bytes to be read to finish a PATH command */
-    int path_read;  /* Number of read bytes of an incomplete PATH command */
+    int read;
+    int to_read;
+    int sent;
 };
 
 void *tcpmw_main_thread(void *);
@@ -102,8 +106,9 @@ void tcpmw_terminate(struct conn_args *);
 int tcpmw_read_cmd(int, char *);
 void tcpmw_unlink_sock(void);
 void *tcpmw_pipe_loop(void *);
-int tcpmw_read_cmd_pipemode(struct conn_args *, struct cmd_state *);
-int tcpmw_from_app_sock(struct conn_args *, struct cmd_state *);
+int tcpmw_read_pipemode(struct conn_args *, struct cmd_state *);
+int tcpmw_parse_cmd_pipemode(struct cmd_state *);
+int tcpmw_send_from_app(struct conn_args *, struct cmd_state *);
 int tcpmw_from_tcp_sock(struct conn_args *);
 int tcpmw_set_path(struct conn_args *, struct cmd_state *);
 int recv_tout(int, char *, int);

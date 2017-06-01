@@ -474,15 +474,23 @@ void *tcpmw_pipe_loop(void *data){
     reset_cmd_state(&state);
     while (1){
         /* Serve app's side first */
-        if (state.cmd_to_read)
-            if (tcpmw_read_cmd_pipemode(args, &state))
+        if (state.to_read) {
+            if (tcpmw_read_pipemode(args, &state)) {
                 break;
-        if (state.send_to_read)
-            if (tcpmw_from_app_sock(args, &state))
+            }
+        }
+        if (!state.to_read) {
+            // There's either a new command to read, or an existing command is ready to be processed.
+            if (state.cmd == CMD_STATE_UNSET && tcpmw_parse_cmd_pipemode(&state)) {
                 break;
-        if (state.path_to_read)
-            if (tcpmw_set_path(args, &state))
+            }
+            if (state.cmd == CMD_STATE_DATA && tcpmw_send_from_app(args, &state)) {
                 break;
+            }
+            if (state.cmd == CMD_STATE_PATH && tcpmw_set_path(args, &state)) {
+                break;
+            }
+        }
         /* Now try to read from netconn's TCP socket */
         if (tcpmw_from_tcp_sock(args))
             break;
@@ -493,36 +501,58 @@ void *tcpmw_pipe_loop(void *data){
 }
 
 void reset_cmd_state(struct cmd_state *state){
-    state->cmd_to_read = CMD_SIZE_PIPEMODE;
-    state->send_to_read = 0;
-    state->path_to_read = 0;
-    state->path_read = 0;
+    state->cmd = CMD_STATE_UNSET;
+    state->read = 0;
+    state->to_read = CMD_SIZE_PIPEMODE;
+    state->sent = 0;
 }
 
-int tcpmw_read_cmd_pipemode(struct conn_args *args, struct cmd_state *state){
-    /* Read command. */
-    int offset = CMD_SIZE_PIPEMODE - state->cmd_to_read;
-    int recvd = recv_tout(args->fd, state->buf + offset, state->cmd_to_read);
+int tcpmw_read_pipemode(struct conn_args *args, struct cmd_state *state){
+    int recvd = recv_tout(args->fd, state->buf + state->read, state->to_read);
     if (recvd < 0)
         return -1; /* Error on reading */
+    state->read += recvd;
+    state->to_read -= recvd;
+    return 0;
+}
 
-    state->cmd_to_read -= recvd;
-    if (state->cmd_to_read)
-        return 0; /* More bytes need to be read, leave for now */
-
-    /* Command is read, check it */
-    int cmd_len = *(uint32_t*)(state->buf + CMD_SIZE);
-    if (CMD_CMP(state->buf, CMD_SEND))
-        state->send_to_read = cmd_len;
-    else if (CMD_CMP(state->buf, CMD_SET_PATH))
-        state->path_to_read = cmd_len;
+int tcpmw_parse_cmd_pipemode(struct cmd_state *state) {
+    if (CMD_CMP(state->buf, CMD_DATA))
+        state->cmd = CMD_STATE_DATA;
+    else if (CMD_CMP(state->buf, CMD_PATH))
+        state->cmd = CMD_STATE_PATH;
     else{
         zlog_error(zc_tcp, "tcpmw_read_cmd_pipemode(): command not found: %.*s (%dB)",
                    CMD_SIZE, state->buf, CMD_SIZE);
         return -1;
     }
+    state->read = 0;
+    state->to_read = *(uint32_t*)(state->buf + CMD_SIZE);
+    if (state->to_read > TCPMW_BUFLEN){
+        zlog_error(zc_tcp, "tcpmw_parse_cmd_pipemode(): incorrect payload length: %dB", state->to_read);
+        return -1;
+    }
     return 0;
 }
+
+int tcpmw_send_from_app(struct conn_args *args, struct cmd_state *state){
+    s8_t lwip_err = 0;
+    size_t tmp_sent;
+
+    /* This is implemented more like send_all(). */
+    while (state->sent < state->read){
+        lwip_err = netconn_write_partly(args->conn, state->buf + state->sent,
+                state->read - state->sent, NETCONN_COPY, &tmp_sent);
+        if (lwip_err != ERR_OK){
+            zlog_error(zc_tcp, "tcpmw_from_app_sock(): netconn_write(): %s", lwip_strerr(lwip_err));
+            return -1;
+        }
+        state->sent += tmp_sent;
+    }
+    reset_cmd_state(state); /* Reset the state as sending is done */
+    return 0;
+}
+
 
 int tcpmw_set_path(struct conn_args *args, struct cmd_state *state){
     /* tcpmw_set_path() is called in the pipe mode, thus nothing is returned to
@@ -530,25 +560,14 @@ int tcpmw_set_path(struct conn_args *args, struct cmd_state *state){
     /* | path (var) | first_hop_ip (4B) | first_hop_port (2B) | */
 
     /* First, validate length */
-    int tot_len = state->path_read + state->path_to_read;
-    if (tot_len < 6 || tot_len > TCPMW_BUFLEN){
-        zlog_error(zc_tcp, "tcpmw_set_path(): incorrect payload length: %dB", tot_len);
+    if (state->read < 6){
+        zlog_error(zc_tcp, "tcpmw_set_path(): incorrect payload length: %dB", state->read);
         return -1; /* Error on reading */
     }
 
-    /* Read the request */
-    int recvd = recv_tout(args->fd, state->buf + state->path_read, state->path_to_read);
-    if (recvd < 0)
-        return -1;
-
-    state->path_read += recvd;
-    state->path_to_read -= recvd;
-    if (state->path_to_read)
-        return 0; /* More bytes need to be read, leave for now */
-
     /* Add path to the TCP/IP state */
     char *p = state->buf;
-    u16_t path_len = tot_len - 6;
+    u16_t path_len = state->read - 6;
     spath_t path = {.raw_path= (uint8_t*)p, .len=path_len};
     p += path_len;  /* skip the path */
 
@@ -564,32 +583,6 @@ int tcpmw_set_path(struct conn_args *args, struct cmd_state *state){
     }
     /* Command executed successfully, reset the cmd state */
     reset_cmd_state(state);
-    return 0;
-}
-
-int tcpmw_from_app_sock(struct conn_args *args, struct cmd_state *state){
-    s8_t lwip_err = 0;
-    size_t tmp_sent, sent = 0;
-    /* Minimum to read */
-    int to_read = (TCPMW_BUFLEN < state->send_to_read ? TCPMW_BUFLEN : state->send_to_read);
-
-    int len = recv_tout(args->fd, state->buf, to_read);
-    if (len < 0)
-        return -1;
-
-    /* This is implemented more like send_all(). */
-    while (sent < len){
-        lwip_err = netconn_write_partly(args->conn, state->buf + sent, len - sent, NETCONN_COPY, &tmp_sent);
-        if (lwip_err != ERR_OK){
-            zlog_error(zc_tcp, "tcpmw_from_app_sock(): netconn_write(): %s", lwip_strerr(lwip_err));
-            return -1;
-        }
-        sent += tmp_sent;
-    }
-    /* Command executed successfully, check the cmd state */
-    state->send_to_read -= len;
-    if (!state->send_to_read)
-        reset_cmd_state(state); /* Reset the state as sending is done */
     return 0;
 }
 
