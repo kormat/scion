@@ -82,9 +82,8 @@ struct conn_args{
 struct cmd_state{
     int cmd;
     char buf[TCPMW_BUFLEN];
-    int read;
+    int offset;
     int to_read;
-    int sent;
 };
 
 void *tcpmw_main_thread(void *);

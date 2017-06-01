@@ -484,12 +484,13 @@ void *tcpmw_pipe_loop(void *data){
             if (state.cmd == CMD_STATE_UNSET && tcpmw_parse_cmd_pipemode(&state)) {
                 break;
             }
-            if (state.cmd == CMD_STATE_DATA && tcpmw_send_from_app(args, &state)) {
-                break;
-            }
             if (state.cmd == CMD_STATE_PATH && tcpmw_set_path(args, &state)) {
                 break;
             }
+        }
+        // There's at least some data in the buffer, and the command is data, so send some data.
+        if (state.offset && state.cmd == CMD_STATE_DATA && tcpmw_send_from_app(args, &state)) {
+            break;
         }
         /* Now try to read from netconn's TCP socket */
         if (tcpmw_from_tcp_sock(args))
@@ -502,34 +503,32 @@ void *tcpmw_pipe_loop(void *data){
 
 void reset_cmd_state(struct cmd_state *state){
     state->cmd = CMD_STATE_UNSET;
-    state->read = 0;
+    state->offset = 0;
     state->to_read = CMD_SIZE_PIPEMODE;
-    state->sent = 0;
 }
 
 int tcpmw_read_pipemode(struct conn_args *args, struct cmd_state *state){
-    int recvd = recv_tout(args->fd, state->buf + state->read, state->to_read);
+    int recvd = recv_tout(args->fd, state->buf + state->offset, state->to_read);
     if (recvd < 0)
         return -1; /* Error on reading */
-    state->read += recvd;
+    state->offset += recvd;
     state->to_read -= recvd;
     return 0;
 }
 
 int tcpmw_parse_cmd_pipemode(struct cmd_state *state) {
-    if (CMD_CMP(state->buf, CMD_DATA))
+    state->to_read = *(uint32_t*)(state->buf + CMD_SIZE);
+    if (CMD_CMP(state->buf, CMD_DATA)) {
         state->cmd = CMD_STATE_DATA;
-    else if (CMD_CMP(state->buf, CMD_PATH))
+    } else if (CMD_CMP(state->buf, CMD_PATH)) {
+        if (state->to_read > TCPMW_BUFLEN){
+            zlog_error(zc_tcp, "tcpmw_parse_cmd_pipemode(): path payload too long: %dB", state->to_read);
+            return -1;
+        }
         state->cmd = CMD_STATE_PATH;
-    else{
+    } else{
         zlog_error(zc_tcp, "tcpmw_read_cmd_pipemode(): command not found: %.*s (%dB)",
                    CMD_SIZE, state->buf, CMD_SIZE);
-        return -1;
-    }
-    state->read = 0;
-    state->to_read = *(uint32_t*)(state->buf + CMD_SIZE);
-    if (state->to_read > TCPMW_BUFLEN){
-        zlog_error(zc_tcp, "tcpmw_parse_cmd_pipemode(): incorrect payload length: %dB", state->to_read);
         return -1;
     }
     return 0;
@@ -537,19 +536,24 @@ int tcpmw_parse_cmd_pipemode(struct cmd_state *state) {
 
 int tcpmw_send_from_app(struct conn_args *args, struct cmd_state *state){
     s8_t lwip_err = 0;
-    size_t tmp_sent;
+    size_t tmp_sent, sent = 0;
 
     /* This is implemented more like send_all(). */
-    while (state->sent < state->read){
-        lwip_err = netconn_write_partly(args->conn, state->buf + state->sent,
-                state->read - state->sent, NETCONN_COPY, &tmp_sent);
+    while (sent < state->offset){
+        lwip_err = netconn_write_partly(args->conn, state->buf + sent,
+                state->offset - sent, NETCONN_COPY, &tmp_sent);
         if (lwip_err != ERR_OK){
             zlog_error(zc_tcp, "tcpmw_from_app_sock(): netconn_write(): %s", lwip_strerr(lwip_err));
             return -1;
         }
-        state->sent += tmp_sent;
+        sent += tmp_sent;
     }
-    reset_cmd_state(state); /* Reset the state as sending is done */
+    if (!state->to_read) {
+        /* Reset the state as sending is done */
+        reset_cmd_state(state); 
+    } else {
+        state->offset = 0;
+    }
     return 0;
 }
 
@@ -560,14 +564,14 @@ int tcpmw_set_path(struct conn_args *args, struct cmd_state *state){
     /* | path (var) | first_hop_ip (4B) | first_hop_port (2B) | */
 
     /* First, validate length */
-    if (state->read < 6){
-        zlog_error(zc_tcp, "tcpmw_set_path(): incorrect payload length: %dB", state->read);
+    if (state->offset < 6){
+        zlog_error(zc_tcp, "tcpmw_set_path(): incorrect payload length: %dB", state->offset);
         return -1; /* Error on reading */
     }
 
     /* Add path to the TCP/IP state */
     char *p = state->buf;
-    u16_t path_len = state->read - 6;
+    u16_t path_len = state->offset - 6;
     spath_t path = {.raw_path= (uint8_t*)p, .len=path_len};
     p += path_len;  /* skip the path */
 
