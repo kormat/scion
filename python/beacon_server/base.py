@@ -67,6 +67,7 @@ from lib.packet.scion_addr import ISD_AS
 from lib.packet.svc import SVCType
 from lib.packet.scmp.types import SCMPClass, SCMPPathClass
 from lib.path_store import PathPolicy
+from lib.profile import profile_log_stats, profile_start
 from lib.thread import thread_safety_net, kill_self
 from lib.types import (
     CertMgmtType,
@@ -122,6 +123,7 @@ class BeaconServer(SCIONElement, metaclass=ABCMeta):
         :param str conf_dir: configuration directory.
         :param str prom_export: prometheus export address.
         """
+        profile_start()
         super().__init__(server_id, conf_dir, prom_export=prom_export)
         # TODO: add 2 policies
         self.path_policy = PathPolicy.from_file(
@@ -444,7 +446,16 @@ class BeaconServer(SCIONElement, metaclass=ABCMeta):
         threading.Thread(
             target=thread_safety_net, args=(self._check_trc_cert_reqs,),
             name="Elem.check_trc_cert_reqs", daemon=True).start()
+        threading.Thread(
+            target=thread_safety_net, args=(self._profile_stats,),
+            name="BS._profile_stats", daemon=True).start()
         super().run()
+
+    def _profile_stats(self):
+        while True:
+            start = time.time()
+            profile_log_stats()
+            sleep_interval(start, 30, "BS._profile_stats")
 
     def _create_next_tree(self):
         last_ttl_window = 0
