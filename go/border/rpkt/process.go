@@ -39,9 +39,23 @@ const (
 	errPldGet = "Unable to retrieve payload"
 )
 
+type moduleHookF func(*RtrPkt) (HookResult, error)
+
+var moduleHooks []moduleHookF
+
 // NeedsLocalProcessing determines if the router needs to do more than just
 // forward a packet (e.g. resolve an SVC destination address).
 func (rp *RtrPkt) NeedsLocalProcessing() error {
+	for i := range moduleHooks {
+		res, err := moduleHooks[i](rp)
+		switch res {
+		case HookContinue:
+			continue
+		case HookFinish:
+			break
+		}
+		return err
+	}
 	if *rp.dstIA != *rp.Ctx.Conf.IA {
 		// Packet isn't to this ISD-AS, so just forward.
 		rp.hooks.Route = append(rp.hooks.Route, rp.forward)
