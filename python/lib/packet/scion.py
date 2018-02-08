@@ -51,6 +51,7 @@ from lib.packet.scmp.ext import SCMPExt
 from lib.packet.scmp.hdr import SCMPHeader
 from lib.packet.scmp.payload import SCMPPayload
 from lib.packet.svc import SVCType
+from lib.rudp import RUDPHdr
 from lib.types import (
     AddrType,
     ExtHopByHopType,
@@ -596,6 +597,7 @@ class SCIONL4Packet(SCIONExtPacket):
 
     def __init__(self, raw=None):  # pragma: no cover
         self.l4_hdr = None
+        self.rudp_hdr = None
         super().__init__(raw)
 
     def _inner_parse(self, data):
@@ -656,7 +658,8 @@ class SCIONL4Packet(SCIONExtPacket):
         praw = self._payload.pack()
         if self.l4_hdr.TYPE == L4Proto.UDP:
             # Treat as SCION control message
-            pld = SignedCtrlPayload.from_raw(praw).pld()
+            pld = SignedCtrlPayload.from_raw(praw[RUDPHdr.LEN:]).pld()
+            self.rudp_hdr = RUDPHdr(praw[:RUDPHdr.LEN])
         elif self.l4_hdr.TYPE == L4Proto.SCMP:
             pld = SCMPPayload((self.l4_hdr.class_, self.l4_hdr.type, praw))
         self.set_payload(pld)

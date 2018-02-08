@@ -955,9 +955,11 @@ class SCIONElement(object):
         Try to put incoming packet in queue
         If queue is full, drop oldest packet in queue
         """
-        msg, meta = self._get_msg_meta(packet, addr, sock)
+        msg, meta, rudp = self._get_msg_meta(packet, addr, sock)
         if msg is None:
             return
+        if rudp is not None and sock == self._udp_sock and rudp.is_need_ack():
+            self.send_meta(rudp.ack_pld(), meta)
         self._in_buf_put((msg, meta))
 
     def _in_buf_put(self, item):
@@ -987,7 +989,7 @@ class SCIONElement(object):
         pkt = self._parse_packet(packet)
         if not pkt:
             logging.error("Cannot parse packet:\n%s" % packet)
-            return None, None
+            return None, None, None
         # Create metadata:
         rev_pkt = pkt.reversed_copy()
         # Skip OneHopPathExt (if exists)
@@ -1009,7 +1011,7 @@ class SCIONElement(object):
 
         else:
             logging.error("Cannot create meta for: %s" % pkt)
-            return None, None
+            return None, None, None
 
         # FIXME(PSz): for now it is needed by SIBRA service.
         meta.pkt = pkt
@@ -1017,8 +1019,8 @@ class SCIONElement(object):
             pkt.parse_payload()
         except SCIONParseError as e:
             logging.error("Cannot parse payload\n  Error: %s\n  Pkt: %s", e, pkt)
-            return None, meta
-        return pkt.get_payload(), meta
+            return None, meta, None
+        return pkt.get_payload(), meta, pkt.rudp_hdr
 
     def handle_accept(self, sock):
         """
