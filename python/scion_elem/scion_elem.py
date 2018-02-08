@@ -959,6 +959,7 @@ class SCIONElement(object):
         if msg is None:
             return
         if rudp is not None and sock == self._udp_sock and rudp.is_need_ack():
+            logging.debug("Sending rudp ACK. Id: %s Meta: %s", hex_str(rudp.id), meta)
             self.send_meta(rudp.ack_pld(), meta)
         self._in_buf_put((msg, meta))
 

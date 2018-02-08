@@ -28,27 +28,14 @@ import (
 
 	"github.com/scionproto/scion/go/lib/common"
 	"github.com/scionproto/scion/go/lib/infra"
+	"github.com/scionproto/scion/go/lib/infra/rudp"
 	liblog "github.com/scionproto/scion/go/lib/log"
 	"github.com/scionproto/scion/go/lib/snet"
 	"github.com/scionproto/scion/go/lib/util/bufpool"
 )
 
-type rudpFlag uint8
-
-func (f rudpFlag) isSet(other rudpFlag) bool {
-	return f&other != 0
-}
-
 // Protocol constants.
 const (
-	// Flag field set in sent messages that do not require ACK.
-	flagsNone = rudpFlag(0x00)
-	// Included in sent messages that require ACK.
-	flagNeedACK = rudpFlag(0x01)
-	// Included in ACKs.
-	flagACK = rudpFlag(0x02)
-	// Size of RUDP header.
-	rudpHdrLen = 8
 	// Maximum amount of time to try and put an ACK on the network
 	rudpACKTimeout = 2 * time.Second
 	// If no ACK is received, senders will resend the message every
@@ -68,7 +55,8 @@ var (
 
 var _ Transport = (*RUDP)(nil)
 
-// RUDP (Reliable UDP) implements a simple UDP protocol with ACKs on top of SCION/UDP.
+// RUDP (Reliable UDP) implements a simple reliable transport with ACKs on top of SCION/UDP.
+// See go/lib/infra/rudp/rudp.go for details of the protocol.
 //
 // Two sending primitives are available:
 //
@@ -77,12 +65,6 @@ var _ Transport = (*RUDP)(nil)
 // SendMsgTo sends a message and waits for a limited amount of time for an
 // ACK; if time allows, also resends the message. Once the parent context is
 // canceled, the function returns immediately with an error.
-//
-// Header format:
-//   0B       1        2        3        4        5        6        7
-//   +--------+--------+--------+--------+--------+--------+--------+--------+
-//   | Flags  |                           PacketID                           |
-//   +--------+--------+--------+--------+--------+--------+--------+--------+
 //
 // RUDP can be safely used by concurrent goroutines.
 //
@@ -127,7 +109,7 @@ func NewRUDP(conn net.PacketConn, logger log.Logger) *RUDP {
 // SendUnreliableMsgTo sends a message and returns without waiting for an ACK.
 func (t *RUDP) SendUnreliableMsgTo(ctx context.Context, b common.RawBytes, a net.Addr) error {
 	id := t.nextPktID.Inc()
-	buffer, err := t.putHeader(id, flagsNone, b)
+	buffer, err := t.putHeader(id, 0, b)
 	if err != nil {
 		return err
 	}
@@ -140,7 +122,7 @@ func (t *RUDP) SendUnreliableMsgTo(ctx context.Context, b common.RawBytes, a net
 // ctx is not canceled.
 func (t *RUDP) SendMsgTo(ctx context.Context, b common.RawBytes, a net.Addr) error {
 	id := t.nextPktID.Inc()
-	buffer, err := t.putHeader(id, flagNeedACK, b)
+	buffer, err := t.putHeader(id, rudp.FlagNeedAck, b)
 	if err != nil {
 		return err
 	}
@@ -177,7 +159,7 @@ func (t *RUDP) SendMsgTo(ctx context.Context, b common.RawBytes, a net.Addr) err
 }
 
 func (t *RUDP) sendACK(id uint56, a net.Addr) error {
-	buffer, err := t.putHeader(id, flagACK, nil)
+	buffer, err := t.putHeader(id, rudp.FlagAck, nil)
 	if err != nil {
 		return err
 	}
@@ -217,17 +199,17 @@ func (t *RUDP) send(ctx context.Context, b common.RawBytes, a net.Addr) error {
 }
 
 // putHeader returns a new buffer containing the Reliable UDP header and b.
-func (t *RUDP) putHeader(id uint56, flags rudpFlag, b common.RawBytes) (*bufpool.Buffer, error) {
+func (t *RUDP) putHeader(id uint56, flags rudp.Flags, b common.RawBytes) (*bufpool.Buffer, error) {
 	buffer := bufpool.Get()
-	if rudpHdrLen+len(b) > len(buffer.B) {
+	if rudp.HdrLen+len(b) > len(buffer.B) {
 		bufpool.Put(buffer)
 		return nil, common.NewBasicError("Unable to send, payload too long", nil,
-			"pld_len", len(b), "max_allowed", len(buffer.B)-rudpHdrLen)
+			"pld_len", len(b), "max_allowed", len(buffer.B)-rudp.HdrLen)
 	}
-	buffer.B[0] = byte(flags)
-	id.putUint56(buffer.B[1:])
-	// Because we checked bounds above, this will never reallocate
-	buffer.B = append(buffer.B[:rudpHdrLen], b...)
+	buffer.B = buffer.B[:rudp.HdrLen+len(b)]
+	hdr := rudp.NewHdr(flags, id.pack())
+	hdr.Write(buffer.B)
+	copy(buffer.B[rudp.HdrLen:], b)
 	return buffer, nil
 }
 
@@ -276,18 +258,19 @@ func (t *RUDP) goBackgroundReceiver() {
 				}
 			}
 
-			flags, id, payload, err := t.popHeader(b.B[:n])
+			hdr, payload, err := t.popHeader(b.B[:n])
 			if err != nil {
 				t.log.Error("Unable to remove Reliable UDP header", "err", common.FmtError(err))
 				bufpool.Put(b)
 				continue
 			}
 			b.B = payload
+			id := getUint56(hdr.Id)
 
 			// If the received message is an ACK we do not propagate it up the
 			// stack. Instead, we signal the waiting goroutine by closing its
 			// channel.
-			if flags.isSet(flagACK) {
+			if hdr.IsAck() {
 				ackChannel, loaded := t.ackTable.Load(id)
 				if !loaded {
 					t.log.Warn("Received ACK, but no one is waiting for it", "id", id)
@@ -302,30 +285,26 @@ func (t *RUDP) goBackgroundReceiver() {
 			event := &readEventDesc{address: address, buffer: b}
 			select {
 			case t.readEvents <- event:
-				// We reliably sent the message to the upper layer, send ACK
-				// (if requested)
-				if flags.isSet(flagNeedACK) {
+				// We reliably sent the message to the upper layer, send ACK (if requested)
+				if hdr.IsNeedAck() {
 					if err := t.sendACK(id, address); err != nil {
 						t.log.Warn("Unable to send ACK", "err", common.FmtError(err))
 					}
 				}
 			default:
-				t.log.Warn("Internal queue full, dropped message", "id", id, "flags", flags,
-					"msg_len", n)
+				t.log.Warn("Internal queue full, dropped message", "hdr", hdr, "msg_len", n)
 			}
 		}
 	}()
 }
 
 // popHeader returns a slice referring only to the payload of b.
-func (t *RUDP) popHeader(b common.RawBytes) (rudpFlag, uint56, common.RawBytes, error) {
-	if len(b) < rudpHdrLen {
-		return 0, 0, nil, common.NewBasicError("Packet shorter than min length", nil,
-			"length", len(b), "min_length", rudpHdrLen)
+func (t *RUDP) popHeader(b common.RawBytes) (*rudp.Hdr, common.RawBytes, error) {
+	if len(b) < rudp.HdrLen {
+		return nil, nil, common.NewBasicError("Packet shorter than min length", nil,
+			"length", len(b), "min_length", rudp.HdrLen)
 	}
-	flags := rudpFlag(b[0])
-	id := getUint56(b[1:])
-	return flags, id, b[rudpHdrLen:], nil
+	return rudp.NewHdrFromRaw(b), b[rudp.HdrLen:], nil
 }
 
 // Close closes the net.PacketConn connection and shuts down the background

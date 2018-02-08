@@ -56,10 +56,7 @@ func (r *Router) genPkt(dstIA *addr.ISD_AS, dstHost addr.HostAddr, dstL4Port int
 	// Create base packet
 	sp := &spkt.ScnPkt{
 		DstIA: dstIA, SrcIA: ctx.Conf.IA, DstHost: dstHost, SrcHost: addr.HostFromIP(srcAddr.IP),
-	}
-	// TODO(klausman, kormat): What if it isn't UDP? Handle other overlay types
-	if srcAddr.Overlay.IsUDP() {
-		sp.L4 = &l4.UDP{SrcPort: uint16(srcAddr.L4Port), DstPort: uint16(dstL4Port)}
+		L4: &l4.UDP{SrcPort: uint16(srcAddr.L4Port), DstPort: uint16(dstL4Port)},
 	}
 	rp, err := rpkt.RtrPktFromScnPkt(sp, dirTo, ctx)
 	if err != nil {

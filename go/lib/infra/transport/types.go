@@ -76,8 +76,14 @@ func (u *uint56) Inc() uint56 {
 	}
 }
 
+func (a uint56) pack() common.RawBytes {
+	b := make(common.RawBytes, 7)
+	a.write(b)
+	return b
+}
+
 // putUint56 writes a to b in network byte order.
-func (a uint56) putUint56(b common.RawBytes) {
+func (a uint56) write(b common.RawBytes) {
 	common.Order.PutUintN(b, uint64(a), 7)
 }
 
