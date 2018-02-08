@@ -116,8 +116,13 @@ func (r *Router) genIFIDPkt(ifID common.IFIDType, ctx *rctx.Ctx) {
 		logger.Error("Error generating IFID signed Ctrl payload", "err", common.FmtError(err))
 		return
 	}
+	rupld, err := rcmn.NewRUdpPld(scpld, 0, nil)
+	if err != nil {
+		log.Error("Error generating IFID RUDP payload", "err", common.FmtError(err))
+		return
+	}
 	if err := r.genPkt(intf.RemoteIA, addr.HostFromIP(intf.RemoteAddr.IP),
-		intf.RemoteAddr.L4Port, srcAddr, scpld); err != nil {
+		intf.RemoteAddr.L4Port, srcAddr, rupld); err != nil {
 		logger.Error("Error generating IFID packet", "err", common.FmtError(err))
 	}
 }
@@ -153,7 +158,12 @@ func (r *Router) genIFStateReq() {
 		log.Error("Error generating IFStateReq signed Ctrl payload", "err", common.FmtError(err))
 		return
 	}
-	if err := r.genPkt(ctx.Conf.IA, addr.SvcBS.Multicast(), 0, srcAddr, scpld); err != nil {
+	rupld, err := rcmn.NewRUdpPld(scpld, 0, nil)
+	if err != nil {
+		log.Error("Error generating IFStateReq RUDP payload", "err", common.FmtError(err))
+		return
+	}
+	if err := r.genPkt(ctx.Conf.IA, addr.SvcBS.Multicast(), 0, srcAddr, rupld); err != nil {
 		log.Error("Error generating IFStateReq packet", "err", common.FmtError(err))
 	}
 }

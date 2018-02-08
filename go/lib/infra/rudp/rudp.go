@@ -37,7 +37,8 @@ type Flags uint8
 const (
 	FlagNeedAck Flags = 0x01
 	FlagAck     Flags = 0x02
-	HdrLen            = 8
+	IdLen             = 7
+	HdrLen            = 1 + IdLen
 )
 
 type Hdr struct {
@@ -46,7 +47,11 @@ type Hdr struct {
 }
 
 func NewHdr(flags Flags, id common.RawBytes) *Hdr {
-	return &Hdr{flags: flags, Id: id}
+	h := &Hdr{flags: flags, Id: id}
+	if len(h.Id) == 0 {
+		h.Id = make(common.RawBytes, IdLen)
+	}
+	return h
 }
 
 func NewHdrFromRaw(b common.RawBytes) *Hdr {
@@ -71,6 +76,10 @@ func (h *Hdr) Pack() common.RawBytes {
 	b := make(common.RawBytes, HdrLen)
 	h.Write(b)
 	return b
+}
+
+func (h *Hdr) Copy() *Hdr {
+	return &Hdr{flags: h.flags, Id: append(common.RawBytes{}, h.Id...)}
 }
 
 func (h *Hdr) String() string {

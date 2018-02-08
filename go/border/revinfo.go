@@ -19,6 +19,7 @@ package main
 import (
 	log "github.com/inconshreveable/log15"
 
+	"github.com/scionproto/scion/go/border/rcmn"
 	"github.com/scionproto/scion/go/border/rctx"
 	"github.com/scionproto/scion/go/border/rpkt"
 	"github.com/scionproto/scion/go/lib/addr"
@@ -67,7 +68,12 @@ func (r *Router) fwdRevInfo(revInfo *path_mgmt.RevInfo, dstHost addr.HostAddr) {
 		log.Error("Error generating RevInfo signed Ctrl payload", "err", common.FmtError(err))
 		return
 	}
-	if err = r.genPkt(ctx.Conf.IA, *dstHost.(*addr.HostSVC), 0, srcAddr, scpld); err != nil {
+	rupld, err := rcmn.NewRUdpPld(scpld, 0, nil)
+	if err != nil {
+		log.Error("Error generating RevInfo RUDP payload", "err", common.FmtError(err))
+		return
+	}
+	if err = r.genPkt(ctx.Conf.IA, *dstHost.(*addr.HostSVC), 0, srcAddr, rupld); err != nil {
 		log.Error("Error generating RevInfo packet", "err", common.FmtError(err))
 	}
 }

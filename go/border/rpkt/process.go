@@ -165,9 +165,12 @@ func (rp *RtrPkt) processIFID(ifid *ifid.IFID) (HookResult, error) {
 	}
 	scpld, err := cpld.SignedPld(ctrl.NullSigner)
 	if err != nil {
+	}
+	rupld, err := rcmn.NewRUdpPld(scpld, 0, nil)
+	if err != nil {
 		return HookError, err
 	}
-	if err = rp.SetPld(scpld); err != nil {
+	if err = rp.SetPld(rupld); err != nil {
 		return HookError, err
 	}
 	intf := rp.Ctx.Conf.Net.IFs[*rp.ifCurr]

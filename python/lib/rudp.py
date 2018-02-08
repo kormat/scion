@@ -35,7 +35,7 @@ class RUDPHdr(object):
             self._parse(raw)
 
     def _parse(self, raw):
-        self.flags, self.id = struct.unpack("!b7s")
+        self.flags, self.id = struct.unpack("!b7s", raw)
 
     def is_ack(self):
         return self.flags & self.FLAG_ACK
