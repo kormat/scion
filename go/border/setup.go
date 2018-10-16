@@ -40,6 +40,11 @@ import (
 	"github.com/scionproto/scion/go/lib/ringbuf"
 )
 
+const (
+	defaultFreePoolSize = 1024
+	minFreePoolHeadroom = 256
+)
+
 type setupNetHook func(r *Router, ctx *rctx.Ctx,
 	oldCtx *rctx.Ctx) (rpkt.HookResult, error)
 type setupAddLocalHook func(r *Router, ctx *rctx.Ctx, labels prometheus.Labels,
@@ -58,7 +63,7 @@ var setupNetFinishHooks []setupNetHook
 // setup creates the router's channels and map, sets up the rpkt package, and
 // sets up a new router context. This function can only be called once during startup.
 func (r *Router) setup() error {
-	r.freePkts = ringbuf.New(1024, func() interface{} {
+	r.freePkts = ringbuf.New(*freePoolSize, func() interface{} {
 		return rpkt.NewRtrPkt()
 	}, "free", prometheus.Labels{"ringId": "freePkts"})
 	r.sRevInfoQ = make(chan rpkt.RawSRevCallbackArgs, 16)
@@ -117,6 +122,9 @@ func (r *Router) loadNewConfig() (*conf.Conf, error) {
 	}
 	log.Debug("Topology and AS config loaded",
 		"IA", config.IA, "IfIDs", config.BR, "dir", r.confDir)
+	if minBuffersPerIntf(len(config.BR.IFIDs)) > *freePoolSize {
+		return nil, common.NewBasicError("Not enough buffers, muppet", nil)
+	}
 	return config, nil
 }
 
@@ -331,4 +339,8 @@ func mkRingLabels(labels prometheus.Labels) prometheus.Labels {
 	ringLabels["ringId"] = labels["sock"]
 	delete(ringLabels, "sock")
 	return ringLabels
+}
+
+func minBuffersPerIntf(n int) int {
+	return (n+1)*inputBufCnt + minFreePoolHeadroom
 }

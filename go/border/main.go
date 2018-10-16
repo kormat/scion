@@ -34,9 +34,11 @@ import (
 )
 
 var (
-	id       = flag.String("id", "", "Element ID (Required. E.g. 'br4-ff00:0:2f')")
-	confDir  = flag.String("confd", ".", "Configuration directory")
-	profFlag = flag.Bool("profile", false, "Enable cpu and memory profiling")
+	id           = flag.String("id", "", "Element ID (Required. E.g. 'br4-ff00:0:2f')")
+	confDir      = flag.String("confd", ".", "Configuration directory")
+	profFlag     = flag.Bool("profile", false, "Enable cpu and memory profiling")
+	freePoolSize = flag.Int("pktBuffers", defaultFreePoolSize,
+		fmt.Sprintf("How many packet buffers to allocate on start. Should be at least %d * (number of interfaces + 1) + %d", inputBufCnt, minFreePoolHeadroom))
 )
 
 func main() {
